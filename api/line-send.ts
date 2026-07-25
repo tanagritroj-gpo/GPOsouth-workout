@@ -1,61 +1,25 @@
+import { cert, getApps, initializeApp } from "firebase-admin/app";
+import { getFirestore } from "firebase-admin/firestore";
+
 const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || "gen-lang-client-0309015147";
-const FIREBASE_API_KEY = process.env.FIREBASE_API_KEY || "AIzaSyCwW0ikefuXgi-oE14_W2h0YciH1BHoAk4";
+const FIRESTORE_DB_ID = process.env.FIRESTORE_DATABASE_ID || "ai-studio-gposouthworkouts-72aed3a5-5bbb-46b6-862a-fd279d089e8d";
 
-function parseVal(v: any): any {
-  if (!v) return undefined;
-  if (v.stringValue !== undefined) return v.stringValue;
-  if (v.integerValue !== undefined) return Number(v.integerValue);
-  if (v.doubleValue !== undefined) return Number(v.doubleValue);
-  if (v.booleanValue !== undefined) return Boolean(v.booleanValue);
-  if (v.mapValue !== undefined) {
-    const fields = v.mapValue.fields || {};
-    const res: any = {};
-    for (const k of Object.keys(fields)) res[k] = parseVal(fields[k]);
-    return res;
+function getAdminDb() {
+  const serviceAccountRaw = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
+  if (!serviceAccountRaw) {
+    throw new Error(
+      "FIREBASE_SERVICE_ACCOUNT_KEY environment variable is not set. Add the Firebase service account JSON key to Vercel env vars to allow this function to read Firestore."
+    );
   }
-  if (v.arrayValue !== undefined) {
-    const values = v.arrayValue.values || [];
-    return values.map((item: any) => parseVal(item));
-  }
-  return Object.values(v)[0];
+  const serviceAccount = JSON.parse(serviceAccountRaw);
+  const app = getApps()[0] || initializeApp({ credential: cert(serviceAccount), projectId: FIREBASE_PROJECT_ID });
+  return getFirestore(app, FIRESTORE_DB_ID);
 }
 
-function parseDoc(docObj: any): any {
-  if (!docObj || !docObj.fields) return null;
-  const fields = docObj.fields;
-  const result: any = {};
-  for (const k of Object.keys(fields)) {
-    result[k] = parseVal(fields[k]);
-  }
-  if (!result.id && docObj.name) {
-    result.id = docObj.name.split("/").pop();
-  }
-  return result;
-}
-
-async function fetchCollectionRest(collectionName: string): Promise<any[]> {
-  const dbIds = [
-    process.env.FIRESTORE_DATABASE_ID || "ai-studio-gposouthworkouts-72aed3a5-5bbb-46b6-862a-fd279d089e8d",
-    "(default)"
-  ];
-
-  for (const dbId of dbIds) {
-    try {
-      const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${encodeURIComponent(dbId)}/documents/${collectionName}?key=${FIREBASE_API_KEY}`;
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 3000);
-      const res = await fetch(url, { signal: controller.signal });
-      clearTimeout(timer);
-      if (!res.ok) continue;
-      const data = await res.json();
-      if (data.documents && Array.isArray(data.documents) && data.documents.length > 0) {
-        return data.documents.map(parseDoc).filter(Boolean);
-      }
-    } catch (err) {
-      // try next database ID
-    }
-  }
-  return [];
+async function fetchCollection(collectionName: string): Promise<any[]> {
+  const db = getAdminDb();
+  const snapshot = await db.collection(collectionName).get();
+  return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 }
 
 function buildDefaultFlexMessage(top5: Array<{ userName: string; totalSteps: number }>, stats: { totalSteps: number; totalWorkouts: number }, appUrl: string) {
@@ -265,8 +229,8 @@ export default async function handler(req: any, res: any) {
         let workouts: any[] = [];
 
         const [fetchedWorkouts, fetchedUsers] = await Promise.all([
-          fetchCollectionRest("workouts"),
-          fetchCollectionRest("users"),
+          fetchCollection("workouts"),
+          fetchCollection("users"),
         ]);
         workouts = fetchedWorkouts || [];
         users = fetchedUsers || [];
