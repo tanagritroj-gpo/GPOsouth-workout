@@ -1,92 +1,20 @@
-import { initializeApp } from "firebase/app";
-import { getFirestore, initializeFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc } from "firebase/firestore";
-import fs from "fs";
-import path from "path";
+import { cert, getApps, initializeApp } from "firebase-admin/app";
+import { getFirestore } from "firebase-admin/firestore";
 import { User, Workout } from "./src/types";
 
-// Load config safely from firebase-applet-config.json or environment variables (works on Vercel Serverless)
-let config: any = {};
-try {
-  const configPath = path.join(process.cwd(), "firebase-applet-config.json");
-  if (fs.existsSync(configPath)) {
-    config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || "gen-lang-client-0309015147";
+const FIRESTORE_DB_ID = process.env.FIRESTORE_DATABASE_ID || "ai-studio-gposouthworkouts-72aed3a5-5bbb-46b6-862a-fd279d089e8d";
+
+function getAdminDb() {
+  const serviceAccountRaw = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
+  if (!serviceAccountRaw) {
+    throw new Error(
+      "FIREBASE_SERVICE_ACCOUNT_KEY environment variable is not set. Add the Firebase service account JSON key to allow server-side Firestore access."
+    );
   }
-} catch (err) {
-  console.warn("Notice: Could not load firebase-applet-config.json via fs, using fallback configuration.");
-}
-
-const firebaseConfig = {
-  apiKey: process.env.FIREBASE_API_KEY || config.apiKey || "AIzaSyCwW0ikefuXgi-oE14_W2h0YciH1BHoAk4",
-  authDomain: process.env.FIREBASE_AUTH_DOMAIN || config.authDomain || "gen-lang-client-0309015147.firebaseapp.com",
-  projectId: process.env.FIREBASE_PROJECT_ID || config.projectId || "gen-lang-client-0309015147",
-  storageBucket: process.env.FIREBASE_STORAGE_BUCKET || config.storageBucket || "gen-lang-client-0309015147.firebasestorage.app",
-  messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || config.messagingSenderId || "263693407727",
-  appId: process.env.FIREBASE_APP_ID || config.appId || "1:263693407727:web:577f6248c0c8195c56921a",
-  measurementId: process.env.FIREBASE_MEASUREMENT_ID || config.measurementId || "",
-};
-
-const app = initializeApp(firebaseConfig);
-const firestoreDbId = config.firestoreDatabaseId || process.env.FIRESTORE_DATABASE_ID || "ai-studio-gposouthworkouts-72aed3a5-5bbb-46b6-862a-fd279d089e8d";
-const db = getFirestore(app, firestoreDbId);
-
-// Helper to parse Firestore REST API response fields safely (ideal for Vercel Serverless)
-function parseFirestoreValue(valObj: any): any {
-  if (!valObj) return undefined;
-  if (valObj.stringValue !== undefined) return valObj.stringValue;
-  if (valObj.integerValue !== undefined) return Number(valObj.integerValue);
-  if (valObj.doubleValue !== undefined) return Number(valObj.doubleValue);
-  if (valObj.booleanValue !== undefined) return Boolean(valObj.booleanValue);
-  if (valObj.mapValue !== undefined) {
-    const fields = valObj.mapValue.fields || {};
-    const res: any = {};
-    for (const k of Object.keys(fields)) res[k] = parseFirestoreValue(fields[k]);
-    return res;
-  }
-  if (valObj.arrayValue !== undefined) {
-    const values = valObj.arrayValue.values || [];
-    return values.map((v: any) => parseFirestoreValue(v));
-  }
-  return Object.values(valObj)[0];
-}
-
-function parseFirestoreDoc(docObj: any): any {
-  if (!docObj || !docObj.fields) return null;
-  const fields = docObj.fields;
-  const result: any = {};
-  for (const k of Object.keys(fields)) {
-    result[k] = parseFirestoreValue(fields[k]);
-  }
-  return result;
-}
-
-async function fetchCollectionRest(collectionName: string): Promise<any[] | null> {
-  const candidateDbIds = Array.from(new Set([
-    process.env.FIRESTORE_DATABASE_ID,
-    config.firestoreDatabaseId,
-    "ai-studio-gposouthworkouts-72aed3a5-5bbb-46b6-862a-fd279d089e8d",
-    "(default)"
-  ].filter(Boolean)));
-
-  for (const dbId of candidateDbIds) {
-    try {
-      const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/${dbId}/documents/${collectionName}?key=${firebaseConfig.apiKey}`;
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 3000);
-      const res = await fetch(url, { signal: controller.signal });
-      clearTimeout(timer);
-
-      if (!res.ok) continue;
-      const data = await res.json();
-      if (data.documents && Array.isArray(data.documents)) {
-        return data.documents.map(parseFirestoreDoc).filter(Boolean);
-      } else if (res.ok) {
-        return [];
-      }
-    } catch (err) {
-      // try next
-    }
-  }
-  return null;
+  const serviceAccount = JSON.parse(serviceAccountRaw);
+  const app = getApps()[0] || initializeApp({ credential: cert(serviceAccount), projectId: FIREBASE_PROJECT_ID });
+  return getFirestore(app, FIRESTORE_DB_ID);
 }
 
 // Helper to get initial mock data if needed for UI testing
@@ -101,31 +29,12 @@ export function getInitialMockData(): { users: User[]; workouts: Workout[] } {
   return { users, workouts: [] };
 }
 
-// Helper to wrap promises with a timeout
-function withTimeout<T>(promise: Promise<T>, ms: number = 3000): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error(`Firestore query timed out after ${ms}ms`)), ms)
-    ),
-  ]);
-}
-
 // 1. Get all users
 export async function getUsers(): Promise<User[]> {
-  const restUsers = await fetchCollectionRest("users");
-  if (restUsers && Array.isArray(restUsers)) {
-    return restUsers as User[];
-  }
-
   try {
-    const usersCol = collection(db, "users");
-    const snapshot = await withTimeout(getDocs(usersCol), 3000);
-    const users: User[] = [];
-    snapshot.forEach((doc) => {
-      users.push(doc.data() as User);
-    });
-    return users;
+    const db = getAdminDb();
+    const snapshot = await db.collection("users").get();
+    return snapshot.docs.map((doc) => ({ ...(doc.data() as User), id: doc.id }));
   } catch (err) {
     console.error("Error getting users from Firestore:", err);
     return [];
@@ -135,8 +44,8 @@ export async function getUsers(): Promise<User[]> {
 // 2. Add user
 export async function addUser(user: User): Promise<void> {
   try {
-    const userRef = doc(db, "users", user.id);
-    await withTimeout(setDoc(userRef, user), 4000);
+    const db = getAdminDb();
+    await db.collection("users").doc(user.id).set(user);
   } catch (err) {
     console.error("Error adding user to Firestore:", err);
     throw err;
@@ -145,19 +54,10 @@ export async function addUser(user: User): Promise<void> {
 
 // 3. Get all workouts
 export async function getWorkouts(): Promise<Workout[]> {
-  const restWorkouts = await fetchCollectionRest("workouts");
-  if (restWorkouts && Array.isArray(restWorkouts)) {
-    const workouts = restWorkouts as Workout[];
-    return workouts.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
-  }
-
   try {
-    const workoutsCol = collection(db, "workouts");
-    const snapshot = await withTimeout(getDocs(workoutsCol), 3000);
-    const workouts: Workout[] = [];
-    snapshot.forEach((doc) => {
-      workouts.push(doc.data() as Workout);
-    });
+    const db = getAdminDb();
+    const snapshot = await db.collection("workouts").get();
+    const workouts = snapshot.docs.map((doc) => ({ ...(doc.data() as Workout), id: doc.id }));
     return workouts.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
   } catch (err) {
     console.error("Error getting workouts from Firestore:", err);
@@ -168,8 +68,8 @@ export async function getWorkouts(): Promise<Workout[]> {
 // 4. Add workout
 export async function addWorkout(workout: Workout): Promise<void> {
   try {
-    const workoutRef = doc(db, "workouts", workout.id);
-    await setDoc(workoutRef, workout);
+    const db = getAdminDb();
+    await db.collection("workouts").doc(workout.id).set(workout);
   } catch (err) {
     console.error("Error adding workout to Firestore:", err);
     throw err;
@@ -179,12 +79,13 @@ export async function addWorkout(workout: Workout): Promise<void> {
 // 5. Delete workout
 export async function deleteWorkout(id: string): Promise<boolean> {
   try {
-    const workoutRef = doc(db, "workouts", id);
-    const docSnap = await getDoc(workoutRef);
-    if (!docSnap.exists()) {
+    const db = getAdminDb();
+    const ref = db.collection("workouts").doc(id);
+    const docSnap = await ref.get();
+    if (!docSnap.exists) {
       return false;
     }
-    await deleteDoc(workoutRef);
+    await ref.delete();
     return true;
   } catch (err) {
     console.error("Error deleting workout from Firestore:", err);

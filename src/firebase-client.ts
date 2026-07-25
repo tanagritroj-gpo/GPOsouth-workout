@@ -1,6 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc, onSnapshot } from "firebase/firestore";
-import { getAuth } from "firebase/auth";
+import { getAuth, signInAnonymously } from "firebase/auth";
 import config from "../firebase-applet-config.json";
 import { User, Workout, WorkoutStats, LeaderboardEntry } from "./types";
 
@@ -17,6 +17,24 @@ const firebaseConfig = {
 export const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, (config as any).firestoreDatabaseId || "ai-studio-gposouthworkouts-72aed3a5-5bbb-46b6-862a-fd279d089e8d");
 export const auth = getAuth(app);
+
+// Firestore rules require request.auth != null, so every Firestore call in this
+// file must wait for this to resolve first. Anonymous sign-in doesn't verify who
+// the employee is (the PIN screen still does that) — it just blocks raw,
+// no-SDK-handshake reads/writes against the database from outside this app.
+let authReadyPromise: Promise<void> | null = null;
+function ensureAuthReady(): Promise<void> {
+  if (!authReadyPromise) {
+    authReadyPromise = signInAnonymously(auth)
+      .then(() => undefined)
+      .catch((err) => {
+        console.error("Anonymous sign-in failed:", err);
+        authReadyPromise = null; // allow retry on next call
+        throw err;
+      });
+  }
+  return authReadyPromise;
+}
 
 // Helper to get initial mock data to seed GPO South Health Tracker if empty
 export function getInitialMockData(): { users: User[]; workouts: Workout[] } {
@@ -102,6 +120,7 @@ export function getInitialMockData(): { users: User[]; workouts: Workout[] } {
 // 1. Get all users
 export async function dbGetUsers(): Promise<User[]> {
   try {
+    await ensureAuthReady();
     const usersCol = collection(db, "users");
     const snapshot = await getDocs(usersCol);
     const users: User[] = [];
@@ -122,6 +141,7 @@ export async function dbGetUsers(): Promise<User[]> {
 // 2. Add user (Register)
 export async function dbAddUser(user: User): Promise<void> {
   try {
+    await ensureAuthReady();
     const userRef = doc(db, "users", user.id);
     await setDoc(userRef, user);
   } catch (err) {
@@ -133,6 +153,7 @@ export async function dbAddUser(user: User): Promise<void> {
 // 2b. Update user profile photo
 export async function dbUpdateUserPhoto(userId: string, photoUrl: string): Promise<void> {
   try {
+    await ensureAuthReady();
     const userRef = doc(db, "users", userId);
     await setDoc(userRef, { photoUrl }, { merge: true });
   } catch (err) {
@@ -144,6 +165,7 @@ export async function dbUpdateUserPhoto(userId: string, photoUrl: string): Promi
 // 3. Get all workouts
 export async function dbGetWorkouts(): Promise<Workout[]> {
   try {
+    await ensureAuthReady();
     const workoutsCol = collection(db, "workouts");
     const snapshot = await getDocs(workoutsCol);
     const workouts: Workout[] = [];
@@ -160,6 +182,7 @@ export async function dbGetWorkouts(): Promise<Workout[]> {
 // 4. Add workout
 export async function dbAddWorkout(workout: Workout): Promise<void> {
   try {
+    await ensureAuthReady();
     const workoutRef = doc(db, "workouts", workout.id);
     await setDoc(workoutRef, workout);
   } catch (err) {
@@ -171,6 +194,7 @@ export async function dbAddWorkout(workout: Workout): Promise<void> {
 // 5. Delete workout
 export async function dbDeleteWorkout(id: string): Promise<boolean> {
   try {
+    await ensureAuthReady();
     const workoutRef = doc(db, "workouts", id);
     const docSnap = await getDoc(workoutRef);
     if (!docSnap.exists()) {
@@ -270,6 +294,7 @@ export async function dbGetSummary(): Promise<{ stats: WorkoutStats; leaderboard
 // 7. Seed initial data if Firestore database is empty
 export async function seedInitialDataIfEmpty(): Promise<void> {
   try {
+    await ensureAuthReady();
     const usersCol = collection(db, "users");
     const snapshot = await getDocs(usersCol);
     if (snapshot.empty) {
@@ -311,26 +336,35 @@ export interface FeedReactionDoc {
 
 // Real-time listener for Comments
 export function dbSubscribeComments(callback: (comments: FeedCommentDoc[]) => void): () => void {
-  try {
-    const commentsCol = collection(db, "comments");
-    return onSnapshot(commentsCol, (snapshot) => {
-      const comments: FeedCommentDoc[] = [];
-      snapshot.forEach((docSnap) => {
-        comments.push(docSnap.data() as FeedCommentDoc);
+  let unsubscribe: (() => void) | null = null;
+  let cancelled = false;
+
+  ensureAuthReady()
+    .then(() => {
+      if (cancelled) return;
+      const commentsCol = collection(db, "comments");
+      unsubscribe = onSnapshot(commentsCol, (snapshot) => {
+        const comments: FeedCommentDoc[] = [];
+        snapshot.forEach((docSnap) => {
+          comments.push(docSnap.data() as FeedCommentDoc);
+        });
+        callback(comments);
+      }, (error) => {
+        console.error("Error in comments real-time listener:", error);
       });
-      callback(comments);
-    }, (error) => {
-      console.error("Error in comments real-time listener:", error);
-    });
-  } catch (err) {
-    console.error("Error setting up comments listener:", err);
-    return () => {};
-  }
+    })
+    .catch((err) => console.error("Error setting up comments listener:", err));
+
+  return () => {
+    cancelled = true;
+    if (unsubscribe) unsubscribe();
+  };
 }
 
 // Add comment to Firestore
 export async function dbAddComment(comment: FeedCommentDoc): Promise<void> {
   try {
+    await ensureAuthReady();
     const commentRef = doc(db, "comments", comment.id);
     await setDoc(commentRef, comment);
   } catch (err) {
@@ -341,26 +375,35 @@ export async function dbAddComment(comment: FeedCommentDoc): Promise<void> {
 
 // Real-time listener for Reactions
 export function dbSubscribeReactions(callback: (reactions: FeedReactionDoc[]) => void): () => void {
-  try {
-    const reactionsCol = collection(db, "reactions");
-    return onSnapshot(reactionsCol, (snapshot) => {
-      const reactions: FeedReactionDoc[] = [];
-      snapshot.forEach((docSnap) => {
-        reactions.push(docSnap.data() as FeedReactionDoc);
+  let unsubscribe: (() => void) | null = null;
+  let cancelled = false;
+
+  ensureAuthReady()
+    .then(() => {
+      if (cancelled) return;
+      const reactionsCol = collection(db, "reactions");
+      unsubscribe = onSnapshot(reactionsCol, (snapshot) => {
+        const reactions: FeedReactionDoc[] = [];
+        snapshot.forEach((docSnap) => {
+          reactions.push(docSnap.data() as FeedReactionDoc);
+        });
+        callback(reactions);
+      }, (error) => {
+        console.error("Error in reactions real-time listener:", error);
       });
-      callback(reactions);
-    }, (error) => {
-      console.error("Error in reactions real-time listener:", error);
-    });
-  } catch (err) {
-    console.error("Error setting up reactions listener:", err);
-    return () => {};
-  }
+    })
+    .catch((err) => console.error("Error setting up reactions listener:", err));
+
+  return () => {
+    cancelled = true;
+    if (unsubscribe) unsubscribe();
+  };
 }
 
 // Toggle or save reaction to Firestore
 export async function dbSaveReaction(reaction: FeedReactionDoc): Promise<void> {
   try {
+    await ensureAuthReady();
     const reactionRef = doc(db, "reactions", reaction.id);
     await setDoc(reactionRef, reaction, { merge: true });
   } catch (err) {
