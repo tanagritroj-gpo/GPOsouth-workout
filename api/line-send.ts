@@ -1,5 +1,8 @@
+import { getUsers, getWorkouts } from "../firebase-db";
+
 const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || "gen-lang-client-0309015147";
 const FIREBASE_API_KEY = process.env.FIREBASE_API_KEY || "AIzaSyCwW0ikefuXgi-oE14_W2h0YciH1BHoAk4";
+const FIRESTORE_DB_ID = process.env.FIRESTORE_DATABASE_ID || "ai-studio-gposouthworkouts-72aed3a5-5bbb-46b6-862a-fd279d089e8d";
 
 function parseVal(v: any): any {
   if (!v) return undefined;
@@ -27,23 +30,21 @@ function parseDoc(docObj: any): any {
   for (const k of Object.keys(fields)) {
     result[k] = parseVal(fields[k]);
   }
-  if (!result.id && docObj.name) {
-    result.id = docObj.name.split("/").pop();
-  }
   return result;
 }
 
+// REST API fetch helper for Firestore
 async function fetchCollectionRest(collectionName: string): Promise<any[]> {
   const dbIds = [
-    "(default)",
-    process.env.FIRESTORE_DATABASE_ID || "ai-studio-gposouthworkouts-72aed3a5-5bbb-46b6-862a-fd279d089e8d"
+    process.env.FIRESTORE_DATABASE_ID || "ai-studio-gposouthworkouts-72aed3a5-5bbb-46b6-862a-fd279d089e8d",
+    "(default)"
   ];
 
   for (const dbId of dbIds) {
     try {
-      const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${encodeURIComponent(dbId)}/documents/${collectionName}?key=${FIREBASE_API_KEY}`;
+      const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${dbId}/documents/${collectionName}?key=${FIREBASE_API_KEY}`;
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 3000);
+      const timer = setTimeout(() => controller.abort(), 2500);
       const res = await fetch(url, { signal: controller.signal });
       clearTimeout(timer);
       if (!res.ok) continue;
@@ -52,28 +53,11 @@ async function fetchCollectionRest(collectionName: string): Promise<any[]> {
         return data.documents.map(parseDoc).filter(Boolean);
       }
     } catch (err) {
-      // try next database ID
+      // try next
     }
   }
   return [];
 }
-
-// Fallback static mock data ONLY if Firestore is completely empty
-const FALLBACK_MOCK_USERS = [
-  { id: "u-1", name: "คุณธนกฤต รจ." },
-  { id: "u-2", name: "คุณสมชาย แข็งแรง" },
-  { id: "u-3", name: "คุณวิภาวี วิ่งไว" },
-  { id: "u-4", name: "คุณเกียรติศักดิ์ ฟิตเปรี๊ยะ" },
-  { id: "u-5", name: "คุณสุพัตรา รักสุขภาพ" },
-];
-
-const FALLBACK_MOCK_WORKOUTS = [
-  { userId: "u-1", userName: "คุณธนกฤต รจ.", steps: 45200 },
-  { userId: "u-2", userName: "คุณสมชาย แข็งแรง", steps: 38900 },
-  { userId: "u-3", userName: "คุณวิภาวี วิ่งไว", steps: 31500 },
-  { userId: "u-4", userName: "คุณเกียรติศักดิ์ ฟิตเปรี๊ยะ", steps: 26800 },
-  { userId: "u-5", userName: "คุณสุพัตรา รักสุขภาพ", steps: 22400 },
-];
 
 function buildDefaultFlexMessage(top5: Array<{ userName: string; totalSteps: number }>, stats: { totalSteps: number; totalWorkouts: number }, appUrl: string) {
   const todayTh = new Date().toLocaleDateString("th-TH", {
@@ -281,17 +265,25 @@ export default async function handler(req: any, res: any) {
         let users: any[] = [];
         let workouts: any[] = [];
 
-        const [fetchedWorkouts, fetchedUsers] = await Promise.all([
-          fetchCollectionRest("workouts"),
-          fetchCollectionRest("users"),
-        ]);
-        workouts = fetchedWorkouts || [];
-        users = fetchedUsers || [];
-
-        if (workouts.length === 0 && users.length === 0) {
-          users = FALLBACK_MOCK_USERS;
-          workouts = FALLBACK_MOCK_WORKOUTS;
+        try {
+          const [w, u] = await Promise.all([
+            getWorkouts().catch(() => []),
+            getUsers().catch(() => []),
+          ]);
+          workouts = w || [];
+          users = u || [];
+        } catch (e) {
+          console.warn("firebase-db fetch failed in line-send, trying REST API:", e);
         }
+
+        if (workouts.length === 0) {
+          workouts = await fetchCollectionRest("workouts");
+        }
+        if (users.length === 0) {
+          users = await fetchCollectionRest("users");
+        }
+
+
 
         const userStepMap: Record<string, { userName: string; totalSteps: number }> = {};
         let totalSteps = 0;
@@ -321,16 +313,7 @@ export default async function handler(req: any, res: any) {
           .filter((u) => u.totalSteps > 0)
           .sort((a, b) => b.totalSteps - a.totalSteps);
 
-        if (leaderboard.length === 0) {
-          const mockUserStepMap: Record<string, { userName: string; totalSteps: number }> = {};
-          FALLBACK_MOCK_WORKOUTS.forEach((w) => {
-            if (!mockUserStepMap[w.userId]) {
-              mockUserStepMap[w.userId] = { userName: w.userName, totalSteps: 0 };
-            }
-            mockUserStepMap[w.userId].totalSteps += w.steps;
-          });
-          leaderboard = Object.values(mockUserStepMap).sort((a, b) => b.totalSteps - a.totalSteps);
-        }
+
 
         if (totalSteps === 0) {
           totalSteps = leaderboard.reduce((sum, item) => sum + item.totalSteps, 0);
