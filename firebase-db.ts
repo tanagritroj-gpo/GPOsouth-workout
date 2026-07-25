@@ -26,8 +26,8 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
-const firestoreDbId = config.firestoreDatabaseId || process.env.FIRESTORE_DATABASE_ID || "ai-studio-gposouthworkouts-72aed3a5-5bbb-46b6-862a-fd279d089e8d";
-const db = getFirestore(app, firestoreDbId);
+const firestoreDbId = process.env.FIRESTORE_DATABASE_ID || config.firestoreDatabaseId || "(default)";
+const db = firestoreDbId && firestoreDbId !== "(default)" ? getFirestore(app, firestoreDbId) : getFirestore(app);
 
 // Helper to parse Firestore REST API response fields safely (ideal for Vercel Serverless)
 function parseFirestoreValue(valObj: any): any {
@@ -56,30 +56,32 @@ function parseFirestoreDoc(docObj: any): any {
   for (const k of Object.keys(fields)) {
     result[k] = parseFirestoreValue(fields[k]);
   }
+  if (!result.id && docObj.name) {
+    result.id = docObj.name.split("/").pop();
+  }
   return result;
 }
 
 async function fetchCollectionRest(collectionName: string): Promise<any[] | null> {
-  try {
-    const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/${firestoreDbId}/documents/${collectionName}?key=${firebaseConfig.apiKey}`;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 2500);
-    const res = await fetch(url, { signal: controller.signal });
-    clearTimeout(timer);
+  const dbIds = ["(default)", firestoreDbId, "ai-studio-gposouthworkouts-72aed3a5-5bbb-46b6-862a-fd279d089e8d"];
+  for (const dbId of dbIds) {
+    try {
+      const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/${encodeURIComponent(dbId)}/documents/${collectionName}?key=${firebaseConfig.apiKey}`;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 2500);
+      const res = await fetch(url, { signal: controller.signal });
+      clearTimeout(timer);
 
-    if (!res.ok) {
-      console.warn(`Firestore REST API returned status ${res.status} for ${collectionName}`);
-      return null;
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (data.documents && Array.isArray(data.documents) && data.documents.length > 0) {
+        return data.documents.map(parseFirestoreDoc).filter(Boolean);
+      }
+    } catch (err) {
+      // continue to next database ID
     }
-    const data = await res.json();
-    if (!data.documents || !Array.isArray(data.documents)) {
-      return [];
-    }
-    return data.documents.map(parseFirestoreDoc).filter(Boolean);
-  } catch (err) {
-    console.warn(`Firestore REST API fetch error for ${collectionName}:`, err);
-    return null;
   }
+  return null;
 }
 
 // Helper to get initial mock data to seed GPO South Health Tracker if empty
