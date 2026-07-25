@@ -193,16 +193,16 @@ function buildFlexMessage(
                 type: "box",
                 layout: "horizontal",
                 contents: [
-                  { type: "text", text: "📊 ก้าวเดินสะสมรวมองค์กร:", size: "xs", color: "#64748B" },
-                  { type: "text", text: `${stats.totalSteps.toLocaleString()} ก้าว`, size: "xs", color: "#006241", weight: "bold", align: "end" },
+                  { type: "text", text: "📊 ก้าวเดินสะสมรวมองค์กร:", size: "xs", color: "#64748B", flex: 3 },
+                  { type: "text", text: `${stats.totalSteps.toLocaleString()} ก้าว`, size: "xs", color: "#006241", weight: "bold", align: "end", flex: 2 },
                 ],
               },
               {
                 type: "box",
                 layout: "horizontal",
                 contents: [
-                  { type: "text", text: "📝 บันทึกสุขภาพรวม:", size: "xs", color: "#64748B" },
-                  { type: "text", text: `${stats.totalWorkouts.toLocaleString()} รายการ`, size: "xs", color: "#006241", weight: "bold", align: "end" },
+                  { type: "text", text: "📝 บันทึกสุขภาพรวม:", size: "xs", color: "#64748B", flex: 3 },
+                  { type: "text", text: `${stats.totalWorkouts.toLocaleString()} รายการ`, size: "xs", color: "#006241", weight: "bold", align: "end", flex: 2 },
                 ],
               },
             ],
@@ -248,11 +248,16 @@ async function sendMondayLeaderboardToLine(forcedChannelToken?: string, forcedTa
   let users: User[] = [];
   try {
     const [w, u] = await Promise.all([
-      getWorkouts().catch(() => getInitialMockData().workouts),
-      getUsers().catch(() => getInitialMockData().users)
+      getWorkouts().catch(() => []),
+      getUsers().catch(() => [])
     ]);
     workouts = w || [];
     users = u || [];
+    if (workouts.length === 0 && users.length === 0) {
+      const mock = getInitialMockData();
+      workouts = mock.workouts;
+      users = mock.users;
+    }
   } catch (err) {
     console.error("Error fetching data for LINE notification, using mock data:", err);
     const mock = getInitialMockData();
@@ -263,19 +268,32 @@ async function sendMondayLeaderboardToLine(forcedChannelToken?: string, forcedTa
   // Leaderboard calculations
   const leaderboardMap: { [key: string]: { userName: string; totalSteps: number; totalCalories: number; totalWorkouts: number } } = {};
   users.forEach((u) => {
-    leaderboardMap[u.id] = { userName: u.name, totalSteps: 0, totalCalories: 0, totalWorkouts: 0 };
+    if (u && u.id) {
+      leaderboardMap[u.id] = { userName: u.name || "ผู้ใช้งาน", totalSteps: 0, totalCalories: 0, totalWorkouts: 0 };
+    }
   });
 
   let totalSteps = 0;
   let totalWorkouts = workouts.length;
 
   workouts.forEach((w) => {
-    totalSteps += w.steps;
-    if (leaderboardMap[w.userId]) {
-      leaderboardMap[w.userId].totalSteps += w.steps;
-      leaderboardMap[w.userId].totalCalories += w.calories;
-      leaderboardMap[w.userId].totalWorkouts += 1;
+    if (!w) return;
+    const steps = Number(w.steps) || 0;
+    const calories = Number(w.calories) || 0;
+    totalSteps += steps;
+
+    const uid = w.userId || `user_${w.userName || "unknown"}`;
+    if (!leaderboardMap[uid]) {
+      leaderboardMap[uid] = {
+        userName: w.userName || "ผู้ใช้งาน",
+        totalSteps: 0,
+        totalCalories: 0,
+        totalWorkouts: 0,
+      };
     }
+    leaderboardMap[uid].totalSteps += steps;
+    leaderboardMap[uid].totalCalories += calories;
+    leaderboardMap[uid].totalWorkouts += 1;
   });
 
   const leaderboard = Object.keys(leaderboardMap)
@@ -285,6 +303,7 @@ async function sendMondayLeaderboardToLine(forcedChannelToken?: string, forcedTa
       totalCalories: leaderboardMap[userId].totalCalories,
       totalWorkouts: leaderboardMap[userId].totalWorkouts,
     }))
+    .filter((item) => item.totalSteps > 0)
     .sort((a, b) => b.totalSteps - a.totalSteps);
 
   const top5 = leaderboard.slice(0, 5);

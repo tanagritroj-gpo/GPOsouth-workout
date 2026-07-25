@@ -1,3 +1,5 @@
+import { getUsers, getWorkouts } from "../firebase-db";
+
 const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || "gen-lang-client-0309015147";
 const FIREBASE_API_KEY = process.env.FIREBASE_API_KEY || "AIzaSyCwW0ikefuXgi-oE14_W2h0YciH1BHoAk4";
 const FIRESTORE_DB_ID = process.env.FIRESTORE_DATABASE_ID || "ai-studio-gposouthworkouts-72aed3a5-5bbb-46b6-862a-fd279d089e8d";
@@ -276,10 +278,28 @@ export default async function handler(req: any, res: any) {
     if (!finalFlexMessage) {
       // Generate default Leaderboard Flex Message from database/data
       try {
-        let users = await fetchCollectionRest("users");
-        let workouts = await fetchCollectionRest("workouts");
+        let users: any[] = [];
+        let workouts: any[] = [];
 
-        if (!users || users.length === 0 || !workouts || workouts.length === 0) {
+        try {
+          const [w, u] = await Promise.all([
+            getWorkouts().catch(() => []),
+            getUsers().catch(() => []),
+          ]);
+          workouts = w || [];
+          users = u || [];
+        } catch (e) {
+          console.warn("firebase-db fetch failed in line-send, trying REST API:", e);
+        }
+
+        if (workouts.length === 0) {
+          workouts = await fetchCollectionRest("workouts");
+        }
+        if (users.length === 0) {
+          users = await fetchCollectionRest("users");
+        }
+
+        if (workouts.length === 0 && users.length === 0) {
           users = FALLBACK_MOCK_USERS;
           workouts = FALLBACK_MOCK_WORKOUTS;
         }
