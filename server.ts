@@ -216,7 +216,7 @@ function buildFlexMessage(
             type: "button",
             action: {
               type: "uri",
-              label: "📲 เปิดดูตารางอันดับเต็ม & บันทึกผล",
+              label: "ดูอันดับ & บันทึกผล",
               uri: urlToUse,
             },
             style: "primary",
@@ -337,11 +337,20 @@ async function sendMondayLeaderboardToLine(forcedChannelToken?: string, forcedTa
         rawError = "LINE Channel Access Token ไม่ถูกต้องหรือหมดอายุ (401 Unauthorized) กรุณาตรวจสอบและบันทึก Token ฉบับเต็มในหน้าตั้งค่า";
       }
       lineConfig.lastStatus = `ล้มเหลว: ${rawError}`;
-      throw new Error(rawError);
+      return {
+        success: false,
+        error: rawError,
+        flexMessage: flexMessageObject,
+      };
     }
   } catch (err: any) {
-    lineConfig.lastStatus = `ล้มเหลว: ${err.message || 'เกิดข้อผิดพลาดในการส่ง LINE'}`;
-    throw err;
+    const errorMsg = err.message || 'เกิดข้อผิดพลาดในการส่ง LINE';
+    lineConfig.lastStatus = `ล้มเหลว: ${errorMsg}`;
+    return {
+      success: false,
+      error: errorMsg,
+      flexMessage: flexMessageObject,
+    };
   }
 }
 
