@@ -1,4 +1,51 @@
-import { getUsers, getWorkouts } from "../firebase-db";
+const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || "gen-lang-client-0309015147";
+const FIREBASE_API_KEY = process.env.FIREBASE_API_KEY || "AIzaSyCwW0ikefuXgi-oE14_W2h0YciH1BHoAk4";
+const FIRESTORE_DB_ID = process.env.FIRESTORE_DATABASE_ID || "ai-studio-gposouthworkouts-72aed3a5-5bbb-46b6-862a-fd279d089e8d";
+
+function parseVal(v: any): any {
+  if (!v) return undefined;
+  if (v.stringValue !== undefined) return v.stringValue;
+  if (v.integerValue !== undefined) return Number(v.integerValue);
+  if (v.doubleValue !== undefined) return Number(v.doubleValue);
+  if (v.booleanValue !== undefined) return Boolean(v.booleanValue);
+  if (v.mapValue !== undefined) {
+    const fields = v.mapValue.fields || {};
+    const res: any = {};
+    for (const k of Object.keys(fields)) res[k] = parseVal(fields[k]);
+    return res;
+  }
+  if (v.arrayValue !== undefined) {
+    const values = v.arrayValue.values || [];
+    return values.map((item: any) => parseVal(item));
+  }
+  return Object.values(v)[0];
+}
+
+function parseDoc(docObj: any): any {
+  if (!docObj || !docObj.fields) return null;
+  const fields = docObj.fields;
+  const result: any = {};
+  for (const k of Object.keys(fields)) {
+    result[k] = parseVal(fields[k]);
+  }
+  return result;
+}
+
+async function fetchCollectionRest(collectionName: string): Promise<any[]> {
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIRESTORE_DB_ID}/documents/${collectionName}?key=${FIREBASE_API_KEY}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2000);
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!res.ok) return [];
+    const data = await res.json();
+    if (!data.documents || !Array.isArray(data.documents)) return [];
+    return data.documents.map(parseDoc).filter(Boolean);
+  } catch (err) {
+    return [];
+  }
+}
 
 function buildDefaultFlexMessage(top5: Array<{ userName: string; totalSteps: number }>, stats: { totalSteps: number; totalWorkouts: number }, appUrl: string) {
   const todayTh = new Date().toLocaleDateString("th-TH", {
@@ -204,25 +251,30 @@ export default async function handler(req: any, res: any) {
       // Generate default Leaderboard Flex Message from database/data
       try {
         const [users, workouts] = await Promise.all([
-          getUsers().catch(() => []),
-          getWorkouts().catch(() => []),
+          fetchCollectionRest("users"),
+          fetchCollectionRest("workouts"),
         ]);
 
         const userStepMap: Record<string, { userName: string; totalSteps: number }> = {};
         let totalSteps = 0;
 
-        users.forEach((u) => {
-          userStepMap[u.id] = { userName: u.name, totalSteps: 0 };
+        users.forEach((u: any) => {
+          if (u && u.id) {
+            userStepMap[u.id] = { userName: u.name || "ผู้ใช้งาน", totalSteps: 0 };
+          }
         });
 
-        workouts.forEach((w) => {
-          totalSteps += w.steps || 0;
-          if (userStepMap[w.userId]) {
-            userStepMap[w.userId].totalSteps += w.steps || 0;
-          } else {
-            userStepMap[w.userId] = {
+        workouts.forEach((w: any) => {
+          if (!w) return;
+          const steps = Number(w.steps) || 0;
+          totalSteps += steps;
+          const uId = w.userId;
+          if (uId && userStepMap[uId]) {
+            userStepMap[uId].totalSteps += steps;
+          } else if (uId) {
+            userStepMap[uId] = {
               userName: w.userName || "ผู้ใช้งาน",
-              totalSteps: w.steps || 0,
+              totalSteps: steps,
             };
           }
         });
