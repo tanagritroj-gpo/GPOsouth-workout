@@ -332,8 +332,8 @@ export default function LineIntegrationModal({
     const targetVal = targetId.trim();
 
     try {
-      // Primary: Call Express server endpoint /api/line/notify which calculates real Firestore leaderboard
-      let response = await fetch('/api/line/notify', {
+      // Primary: Call dedicated lightweight Vercel Function /api/line-send
+      let response = await fetch('/api/line-send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -342,9 +342,9 @@ export default function LineIntegrationModal({
         }),
       });
 
-      // Secondary: Fallback to /api/line-send if 404 or fails
+      // Secondary: Fallback to /api/line/notify if 404 or fails
       if (response.status === 404) {
-        response = await fetch('/api/line-send', {
+        response = await fetch('/api/line/notify', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
