@@ -30,7 +30,10 @@ app.use((req, res, next) => {
 
 // Normalize URL for Vercel serverless function routing if running on Vercel
 app.use((req, res, next) => {
-  if (process.env.VERCEL && req.url && !req.url.startsWith("/api") && !req.url.startsWith("/_")) {
+  const forwardedUri = (req.headers["x-forwarded-uri"] as string) || (req.headers["x-matched-path"] as string);
+  if (forwardedUri && forwardedUri.startsWith("/api")) {
+    req.url = forwardedUri;
+  } else if (process.env.VERCEL && req.url && !req.url.startsWith("/api") && !req.url.startsWith("/_")) {
     req.url = "/api" + (req.url.startsWith("/") ? "" : "/") + req.url;
   }
   next();
