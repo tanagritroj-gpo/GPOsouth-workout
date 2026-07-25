@@ -1,5 +1,3 @@
-import { getUsers, getWorkouts } from "../firebase-db";
-
 const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || "gen-lang-client-0309015147";
 const FIREBASE_API_KEY = process.env.FIREBASE_API_KEY || "AIzaSyCwW0ikefuXgi-oE14_W2h0YciH1BHoAk4";
 const FIRESTORE_DB_ID = process.env.FIRESTORE_DATABASE_ID || "ai-studio-gposouthworkouts-72aed3a5-5bbb-46b6-862a-fd279d089e8d";
@@ -34,46 +32,20 @@ function parseDoc(docObj: any): any {
 }
 
 async function fetchCollectionRest(collectionName: string): Promise<any[]> {
-  const dbIds = [
-    process.env.FIRESTORE_DATABASE_ID || "ai-studio-gposouthworkouts-72aed3a5-5bbb-46b6-862a-fd279d089e8d",
-    "(default)"
-  ];
-
-  for (const dbId of dbIds) {
-    try {
-      const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${dbId}/documents/${collectionName}?key=${FIREBASE_API_KEY}`;
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 2500);
-      const res = await fetch(url, { signal: controller.signal });
-      clearTimeout(timer);
-      if (!res.ok) continue;
-      const data = await res.json();
-      if (data.documents && Array.isArray(data.documents) && data.documents.length > 0) {
-        return data.documents.map(parseDoc).filter(Boolean);
-      }
-    } catch (err) {
-      // try next
-    }
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIRESTORE_DB_ID}/documents/${collectionName}?key=${FIREBASE_API_KEY}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2000);
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!res.ok) return [];
+    const data = await res.json();
+    if (!data.documents || !Array.isArray(data.documents)) return [];
+    return data.documents.map(parseDoc).filter(Boolean);
+  } catch (err) {
+    return [];
   }
-  return [];
 }
-
-// Fallback static mock data for standalone serverless function
-const FALLBACK_MOCK_USERS = [
-  { id: "u-1", name: "คุณธนกฤต รจ." },
-  { id: "u-2", name: "คุณสมชาย แข็งแรง" },
-  { id: "u-3", name: "คุณวิภาวี วิ่งไว" },
-  { id: "u-4", name: "คุณเกียรติศักดิ์ ฟิตเปรี๊ยะ" },
-  { id: "u-5", name: "คุณสุพัตรา รักสุขภาพ" },
-];
-
-const FALLBACK_MOCK_WORKOUTS = [
-  { userId: "u-1", userName: "คุณธนกฤต รจ.", steps: 45200 },
-  { userId: "u-2", userName: "คุณสมชาย แข็งแรง", steps: 38900 },
-  { userId: "u-3", userName: "คุณวิภาวี วิ่งไว", steps: 31500 },
-  { userId: "u-4", userName: "คุณเกียรติศักดิ์ ฟิตเปรี๊ยะ", steps: 26800 },
-  { userId: "u-5", userName: "คุณสุพัตรา รักสุขภาพ", steps: 22400 },
-];
 
 function buildDefaultFlexMessage(top5: Array<{ userName: string; totalSteps: number }>, stats: { totalSteps: number; totalWorkouts: number }, appUrl: string) {
   const todayTh = new Date().toLocaleDateString("th-TH", {
@@ -114,7 +86,7 @@ function buildDefaultFlexMessage(top5: Array<{ userName: string; totalSteps: num
               size: "xs",
               weight: "bold",
               color: rankColor,
-              flex: 1,
+              flex: 0,
             },
             {
               type: "text",
@@ -122,7 +94,7 @@ function buildDefaultFlexMessage(top5: Array<{ userName: string; totalSteps: num
               size: "xs",
               weight: "bold",
               color: "#1E293B",
-              flex: 4,
+              flex: 1,
               margin: "sm",
             },
             {
@@ -132,7 +104,7 @@ function buildDefaultFlexMessage(top5: Array<{ userName: string; totalSteps: num
               weight: "bold",
               color: "#006241",
               align: "end",
-              flex: 3,
+              flex: 0,
             },
           ],
         };
@@ -208,16 +180,16 @@ function buildDefaultFlexMessage(top5: Array<{ userName: string; totalSteps: num
                 type: "box",
                 layout: "horizontal",
                 contents: [
-                  { type: "text", text: "📊 ก้าวรวมองค์กร:", size: "xs", color: "#64748B", flex: 3 },
-                  { type: "text", text: `${(stats.totalSteps || 159900).toLocaleString()} ก้าว`, size: "xs", color: "#006241", weight: "bold", align: "end", flex: 2 },
+                  { type: "text", text: "📊 ก้าวเดินสะสมรวมองค์กร:", size: "xs", color: "#64748B" },
+                  { type: "text", text: `${stats.totalSteps.toLocaleString()} ก้าว`, size: "xs", color: "#006241", weight: "bold", align: "end" },
                 ],
               },
               {
                 type: "box",
                 layout: "horizontal",
                 contents: [
-                  { type: "text", text: "📝 บันทึกสุขภาพ:", size: "xs", color: "#64748B", flex: 3 },
-                  { type: "text", text: `${(stats.totalWorkouts || 58).toLocaleString()} รายการ`, size: "xs", color: "#006241", weight: "bold", align: "end", flex: 2 },
+                  { type: "text", text: "📝 บันทึกสุขภาพรวม:", size: "xs", color: "#64748B" },
+                  { type: "text", text: `${stats.totalWorkouts.toLocaleString()} รายการ`, size: "xs", color: "#006241", weight: "bold", align: "end" },
                 ],
               },
             ],
@@ -278,31 +250,10 @@ export default async function handler(req: any, res: any) {
     if (!finalFlexMessage) {
       // Generate default Leaderboard Flex Message from database/data
       try {
-        let users: any[] = [];
-        let workouts: any[] = [];
-
-        try {
-          const [w, u] = await Promise.all([
-            getWorkouts().catch(() => []),
-            getUsers().catch(() => []),
-          ]);
-          workouts = w || [];
-          users = u || [];
-        } catch (e) {
-          console.warn("firebase-db fetch failed in line-send, trying REST API:", e);
-        }
-
-        if (workouts.length === 0) {
-          workouts = await fetchCollectionRest("workouts");
-        }
-        if (users.length === 0) {
-          users = await fetchCollectionRest("users");
-        }
-
-        if (workouts.length === 0 && users.length === 0) {
-          users = FALLBACK_MOCK_USERS;
-          workouts = FALLBACK_MOCK_WORKOUTS;
-        }
+        const [users, workouts] = await Promise.all([
+          fetchCollectionRest("users"),
+          fetchCollectionRest("workouts"),
+        ]);
 
         const userStepMap: Record<string, { userName: string; totalSteps: number }> = {};
         let totalSteps = 0;
@@ -328,27 +279,12 @@ export default async function handler(req: any, res: any) {
           }
         });
 
-        let leaderboard = Object.values(userStepMap)
+        const leaderboard = Object.values(userStepMap)
           .filter((u) => u.totalSteps > 0)
           .sort((a, b) => b.totalSteps - a.totalSteps);
 
-        if (leaderboard.length === 0) {
-          const mockUserStepMap: Record<string, { userName: string; totalSteps: number }> = {};
-          FALLBACK_MOCK_WORKOUTS.forEach((w) => {
-            if (!mockUserStepMap[w.userId]) {
-              mockUserStepMap[w.userId] = { userName: w.userName, totalSteps: 0 };
-            }
-            mockUserStepMap[w.userId].totalSteps += w.steps;
-          });
-          leaderboard = Object.values(mockUserStepMap).sort((a, b) => b.totalSteps - a.totalSteps);
-        }
-
-        if (totalSteps === 0) {
-          totalSteps = leaderboard.reduce((sum, item) => sum + item.totalSteps, 0);
-        }
-
         const top5 = leaderboard.slice(0, 5);
-        finalFlexMessage = buildDefaultFlexMessage(top5, { totalSteps, totalWorkouts: workouts.length || 15 }, appUrl);
+        finalFlexMessage = buildDefaultFlexMessage(top5, { totalSteps, totalWorkouts: workouts.length }, appUrl);
       } catch (e) {
         console.warn("Could not generate dynamic leaderboard for Flex message:", e);
         // Fallback to static sample leaderboard
