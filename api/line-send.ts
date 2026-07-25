@@ -47,8 +47,6 @@ async function fetchCollectionRest(collectionName: string): Promise<any[]> {
   }
 }
 
-import { getUsers, getWorkouts, getInitialMockData } from "../firebase-db";
-
 function buildDefaultFlexMessage(top5: Array<{ userName: string; totalSteps: number }>, stats: { totalSteps: number; totalWorkouts: number }, appUrl: string) {
   const todayTh = new Date().toLocaleDateString("th-TH", {
     day: "numeric",
@@ -88,7 +86,7 @@ function buildDefaultFlexMessage(top5: Array<{ userName: string; totalSteps: num
               size: "xs",
               weight: "bold",
               color: rankColor,
-              flex: 1,
+              flex: 0,
             },
             {
               type: "text",
@@ -96,7 +94,7 @@ function buildDefaultFlexMessage(top5: Array<{ userName: string; totalSteps: num
               size: "xs",
               weight: "bold",
               color: "#1E293B",
-              flex: 4,
+              flex: 1,
               margin: "sm",
             },
             {
@@ -106,7 +104,7 @@ function buildDefaultFlexMessage(top5: Array<{ userName: string; totalSteps: num
               weight: "bold",
               color: "#006241",
               align: "end",
-              flex: 3,
+              flex: 0,
             },
           ],
         };
@@ -182,16 +180,16 @@ function buildDefaultFlexMessage(top5: Array<{ userName: string; totalSteps: num
                 type: "box",
                 layout: "horizontal",
                 contents: [
-                  { type: "text", text: "📊 ก้าวเดินสะสมรวมองค์กร:", size: "xs", color: "#64748B", flex: 3 },
-                  { type: "text", text: `${stats.totalSteps.toLocaleString()} ก้าว`, size: "xs", color: "#006241", weight: "bold", align: "end", flex: 2 },
+                  { type: "text", text: "📊 ก้าวเดินสะสมรวมองค์กร:", size: "xs", color: "#64748B" },
+                  { type: "text", text: `${stats.totalSteps.toLocaleString()} ก้าว`, size: "xs", color: "#006241", weight: "bold", align: "end" },
                 ],
               },
               {
                 type: "box",
                 layout: "horizontal",
                 contents: [
-                  { type: "text", text: "📝 บันทึกสุขภาพรวม:", size: "xs", color: "#64748B", flex: 3 },
-                  { type: "text", text: `${stats.totalWorkouts.toLocaleString()} รายการ`, size: "xs", color: "#006241", weight: "bold", align: "end", flex: 2 },
+                  { type: "text", text: "📝 บันทึกสุขภาพรวม:", size: "xs", color: "#64748B" },
+                  { type: "text", text: `${stats.totalWorkouts.toLocaleString()} รายการ`, size: "xs", color: "#006241", weight: "bold", align: "end" },
                 ],
               },
             ],
@@ -252,14 +250,10 @@ export default async function handler(req: any, res: any) {
     if (!finalFlexMessage) {
       // Generate default Leaderboard Flex Message from database/data
       try {
-        let users = await fetchCollectionRest("users");
-        let workouts = await fetchCollectionRest("workouts");
-
-        if (!users || users.length === 0 || !workouts || workouts.length === 0) {
-          const mockData = getInitialMockData();
-          users = mockData.users;
-          workouts = mockData.workouts;
-        }
+        const [users, workouts] = await Promise.all([
+          fetchCollectionRest("users"),
+          fetchCollectionRest("workouts"),
+        ]);
 
         const userStepMap: Record<string, { userName: string; totalSteps: number }> = {};
         let totalSteps = 0;
@@ -285,21 +279,9 @@ export default async function handler(req: any, res: any) {
           }
         });
 
-        let leaderboard = Object.values(userStepMap)
+        const leaderboard = Object.values(userStepMap)
           .filter((u) => u.totalSteps > 0)
           .sort((a, b) => b.totalSteps - a.totalSteps);
-
-        if (leaderboard.length === 0) {
-          const mockData = getInitialMockData();
-          const mockUserStepMap: Record<string, { userName: string; totalSteps: number }> = {};
-          mockData.workouts.forEach((w) => {
-            if (!mockUserStepMap[w.userId]) {
-              mockUserStepMap[w.userId] = { userName: w.userName, totalSteps: 0 };
-            }
-            mockUserStepMap[w.userId].totalSteps += w.steps;
-          });
-          leaderboard = Object.values(mockUserStepMap).sort((a, b) => b.totalSteps - a.totalSteps);
-        }
 
         const top5 = leaderboard.slice(0, 5);
         finalFlexMessage = buildDefaultFlexMessage(top5, { totalSteps, totalWorkouts: workouts.length }, appUrl);
