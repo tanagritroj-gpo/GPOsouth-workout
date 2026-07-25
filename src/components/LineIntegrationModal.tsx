@@ -280,10 +280,22 @@ export default function LineIntegrationModal({
     setSendError(null);
 
     try {
-      const res = await fetch('/api/line/trigger-auto', {
+      let res = await fetch('/api/line/trigger-auto', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });
+
+      if (!res.ok) {
+        // Fallback to lightweight endpoint
+        res = await fetch('/api/line-send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            channelAccessToken: channelAccessToken.trim(),
+            targetId: targetId.trim(),
+          }),
+        });
+      }
 
       const contentType = res.headers.get('content-type') || '';
       let data: any = {};
@@ -316,15 +328,31 @@ export default function LineIntegrationModal({
     setSendSuccess(null);
     setSendError(null);
 
+    const tokenVal = channelAccessToken.trim();
+    const targetVal = targetId.trim();
+
     try {
-      const response = await fetch('/api/line/notify', {
+      // Primary: Call dedicated lightweight Vercel Function /api/line-send
+      let response = await fetch('/api/line-send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          channelAccessToken: channelAccessToken.trim(),
-          targetId: targetId.trim(),
+          channelAccessToken: tokenVal,
+          targetId: targetVal,
         }),
       });
+
+      // Secondary: Fallback to /api/line/notify if 404 or fails
+      if (response.status === 404) {
+        response = await fetch('/api/line/notify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            channelAccessToken: tokenVal,
+            targetId: targetVal,
+          }),
+        });
+      }
 
       const contentType = response.headers.get('content-type') || '';
       let data: any = {};

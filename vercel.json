@@ -2,6 +2,10 @@
   "version": 2,
   "rewrites": [
     {
+      "source": "/api/line-send",
+      "destination": "/api/line-send"
+    },
+    {
       "source": "/api/(.*)",
       "destination": "/api"
     }

@@ -233,7 +233,7 @@ function buildFlexMessage(
 }
 
 // Helper function to generate and send Monday Leaderboard Flex Message via LINE Messaging API
-async function sendMondayLeaderboardToLine(forcedChannelToken?: string, forcedTargetId?: string) {
+async function sendMondayLeaderboardToLine(forcedChannelToken?: string, forcedTargetId?: string, customFlexMessage?: any) {
   let channelToken = (forcedChannelToken && forcedChannelToken.trim()) || "";
   // If provided token is masked (contains '...'), fall back to saved lineConfig or env
   if (!channelToken || channelToken.includes("...")) {
@@ -288,7 +288,7 @@ async function sendMondayLeaderboardToLine(forcedChannelToken?: string, forcedTa
     .sort((a, b) => b.totalSteps - a.totalSteps);
 
   const top5 = leaderboard.slice(0, 5);
-  const flexMessageObject = buildFlexMessage(top5, { totalSteps, totalWorkouts });
+  const flexMessageObject = customFlexMessage || buildFlexMessage(top5, { totalSteps, totalWorkouts });
 
   if (!channelToken) {
     lineConfig.lastStatus = `จำลองส่ง Flex Message สำเร็จเวลา ${new Date().toLocaleTimeString('th-TH')} (โปรดใส่ Channel Access Token ในตั้งค่าเพื่อส่งจริง)`;
@@ -688,12 +688,12 @@ app.post(["/api/line/trigger-auto", "/line/trigger-auto"], async (req, res) => {
   }
 });
 
-app.post(["/api/line/notify", "/line/notify"], async (req, res) => {
-  const { channelAccessToken, token, targetId } = req.body || {};
+app.post(["/api/line/notify", "/line/notify", "/api/line-send", "/line-send"], async (req, res) => {
+  const { channelAccessToken, token, targetId, flexMessage } = req.body || {};
   const tokenToUse = channelAccessToken || token;
 
   try {
-    const result = await sendMondayLeaderboardToLine(tokenToUse, targetId);
+    const result = await sendMondayLeaderboardToLine(tokenToUse, targetId, flexMessage);
     return res.json(result);
   } catch (error: any) {
     console.error("POST /api/line/notify error:", error);
