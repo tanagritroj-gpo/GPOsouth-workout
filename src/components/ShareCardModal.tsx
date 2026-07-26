@@ -15,7 +15,7 @@ interface ShareCardModalProps {
 
 export default function ShareCardModal({ workout, currentUser, onClose }: ShareCardModalProps) {
   const cardRef = useRef<HTMLDivElement>(null);
-  const photoContainerRef = useRef<HTMLDivElement>(null);
+  const photoImgRef = useRef<HTMLImageElement>(null);
   const [downloading, setDownloading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [photoEmbedError, setPhotoEmbedError] = useState<string | null>(null);
@@ -28,24 +28,18 @@ export default function ShareCardModal({ workout, currentUser, onClose }: ShareC
   const dateStr = workout?.period || workout?.date || new Date().toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' });
   const imageUrl = workout?.imageUrl || (workout?.imageUrls && workout.imageUrls[0]);
 
-  // The photo is deliberately NOT set as a plain `background-image: url(imageUrl)`
-  // anywhere — that would make the browser issue its own normal image request
-  // for display, IN ADDITION to the fetch() below needed to embed it as a data
-  // URL for export. Two simultaneous requests for the same externally-hosted
-  // (Google-served) photo is exactly what was tripping Google's rate limiting
-  // (confirmed via a real HTTP 429 response while investigating this bug) —
-  // this component is the only thing that ever requests this photo, once.
-  //
-  // Separately, html-to-image's own image embedding (node_modules/html-to-image/
-  // lib/dataurl.js resourceToDataURL) keeps a module-level cache keyed by URL,
-  // and if its fetch for an image ever fails once, it caches an EMPTY result
-  // and reuses it forever after (cacheBust only busts the fetch itself, not
-  // this cache key) — another reason to embed the photo ourselves rather than
-  // let html-to-image fetch it.
+  // Fetch the externally-hosted (Google-served) workout photo ourselves and
+  // patch it into the <img> as a data: URL before calling toPng, instead of
+  // letting html-to-image fetch it during export. This is the one thing
+  // confirmed to matter here: requesting the same photo twice (once for
+  // display, once during export) was tripping Google's rate limiting —
+  // confirmed via a real HTTP 429 response while investigating this bug —
+  // which explained the original "works on 2nd try" symptom. This component
+  // is now the only thing that ever requests this photo, once, with retry.
   const embedPromiseRef = useRef<Promise<void> | null>(null);
   const embedPhotoAsDataUrl = (): Promise<void> => {
-    const containerEl = photoContainerRef.current;
-    if (!containerEl || !imageUrl || containerEl.style.backgroundImage.includes('data:')) return Promise.resolve();
+    const imgEl = photoImgRef.current;
+    if (!imgEl || !imageUrl || imgEl.src.startsWith('data:')) return Promise.resolve();
     if (embedPromiseRef.current) return embedPromiseRef.current;
 
     const fetchWithRetry = async (): Promise<Blob> => {
@@ -78,11 +72,10 @@ export default function ShareCardModal({ workout, currentUser, onClose }: ShareC
           reader.onerror = () => reject(reader.error || new Error('FileReader failed'));
           reader.readAsDataURL(blob);
         });
-        containerEl.style.backgroundImage = `url("${dataUrl}")`;
-        // Give the browser an actual paint cycle before anything reads the DOM
-        // back out (toPng's cloneNode runs synchronously right after this).
-        await new Promise<void>((resolve) => {
-          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        await new Promise<void>((resolve, reject) => {
+          imgEl.onload = () => resolve();
+          imgEl.onerror = () => reject(new Error('Image failed to decode after setting data URL'));
+          imgEl.src = dataUrl;
         });
         setPhotoEmbedError(null);
       } catch (err: any) {
@@ -111,7 +104,7 @@ export default function ShareCardModal({ workout, currentUser, onClose }: ShareC
       pixelRatio: 2,
       cacheBust: true,
     });
-    
+
     const res = await fetch(dataUrl);
     const blob = await res.blob();
     const fileName = `GPO_Workout_${currentUser.name.replace(/\s+/g, '_')}_${Date.now()}.png`;
@@ -248,17 +241,15 @@ export default function ShareCardModal({ workout, currentUser, onClose }: ShareC
 
             {/* Optional Photo Attachment */}
             {imageUrl ? (
-              <div className="my-2 rounded-2xl overflow-hidden border-2 border-white/20 shadow-md max-h-40 sm:max-h-48 relative group">
-                {/* No background-image URL set here on purpose — see the long
-                    comment above embedPhotoAsDataUrl. This div starts blank and
-                    embedPhotoAsDataUrl fills it in once its single fetch of the
-                    photo completes, so the browser only ever requests it once. */}
-                <div
-                  ref={photoContainerRef}
-                  role="img"
-                  aria-label="Workout"
-                  className="w-full h-36 sm:h-44 bg-black/20"
-                  style={{ backgroundSize: 'cover', backgroundPosition: 'center' }}
+              <div className="my-2 rounded-2xl overflow-hidden border-2 border-white/20 shadow-md max-h-40 sm:max-h-48 relative group bg-black/20">
+                {/* No src set here on purpose — see the comment above
+                    embedPhotoAsDataUrl. This starts blank and that function
+                    fills it in once its single fetch of the photo completes,
+                    so the browser only ever requests this photo once. */}
+                <img
+                  ref={photoImgRef}
+                  alt="Workout"
+                  className="w-full h-36 sm:h-44 object-cover"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
                 <div className="absolute bottom-2 left-3 right-3 flex items-center justify-between text-white text-[10px] sm:text-[11px] font-bold">
