@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Workout, User } from '../types';
 import GpoLogo from './GpoLogo';
@@ -26,8 +26,34 @@ export default function ShareCardModal({ workout, currentUser, onClose }: ShareC
   const dateStr = workout?.period || workout?.date || new Date().toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' });
   const imageUrl = workout?.imageUrl || (workout?.imageUrls && workout.imageUrls[0]);
 
+  // html-to-image renders the card by serializing it into an SVG <foreignObject>,
+  // then loading that SVG into an offscreen <img> and waiting for ITS onload —
+  // which fires as soon as the SVG document itself is parsed, not once every
+  // externally-hosted photo inside it (googleusercontent.com, no CORS caching
+  // guarantee) has actually finished downloading. The first export can capture
+  // before that photo has painted; warming the browser's HTTP cache for it
+  // ahead of time means it's already available and paints in time.
+  const preloadImage = (src?: string | false): Promise<void> => {
+    return new Promise((resolve) => {
+      if (!src) return resolve();
+      const img = new Image();
+      // No crossOrigin here — the <img> actually rendered in the card below
+      // doesn't set it either, and browsers cache CORS vs. non-CORS fetches
+      // of the same URL separately. Matching fetch mode is what makes this
+      // preload actually warm the cache entry html-to-image's cloned node reuses.
+      img.onload = () => resolve();
+      img.onerror = () => resolve(); // don't block export if the photo fails to load
+      img.src = src;
+    });
+  };
+
+  useEffect(() => {
+    preloadImage(imageUrl);
+  }, [imageUrl]);
+
   const generateCardFileAndUrl = async (): Promise<{ file: File; dataUrl: string } | null> => {
     if (!cardRef.current) return null;
+    await preloadImage(imageUrl);
     const dataUrl = await toPng(cardRef.current, {
       quality: 0.95,
       pixelRatio: 2,
