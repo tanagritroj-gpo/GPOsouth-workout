@@ -19,6 +19,12 @@ export default function ShareCardModal({ workout, currentUser, onClose }: ShareC
   const [downloading, setDownloading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [photoEmbedError, setPhotoEmbedError] = useState<string | null>(null);
+  const [debugLog, setDebugLog] = useState<string[]>([]);
+  const log = (msg: string) => {
+    const line = `${new Date().toLocaleTimeString('th-TH', { hour12: false })} ${msg}`;
+    console.log('[ShareCard]', line);
+    setDebugLog((prev) => [...prev.slice(-11), line]);
+  };
 
   // If specific workout is provided, use its details. Otherwise, construct a summary card for user.
   const activityName = workout?.activityType || 'ออกกำลังกายประจำวัน';
@@ -39,14 +45,26 @@ export default function ShareCardModal({ workout, currentUser, onClose }: ShareC
   const embedPromiseRef = useRef<Promise<void> | null>(null);
   const embedPhotoAsDataUrl = (): Promise<void> => {
     const imgEl = photoImgRef.current;
-    if (!imgEl || !imageUrl || imgEl.src.startsWith('data:')) return Promise.resolve();
-    if (embedPromiseRef.current) return embedPromiseRef.current;
+    if (!imgEl || !imageUrl) {
+      log(`embed: skipped (imgEl=${!!imgEl}, imageUrl=${!!imageUrl})`);
+      return Promise.resolve();
+    }
+    if (imgEl.src.startsWith('data:')) {
+      log('embed: already a data URL, skipping');
+      return Promise.resolve();
+    }
+    if (embedPromiseRef.current) {
+      log('embed: already in flight, reusing');
+      return embedPromiseRef.current;
+    }
 
     const fetchWithRetry = async (): Promise<Blob> => {
       const attempts = 3;
       for (let attempt = 1; attempt <= attempts; attempt++) {
         try {
+          log(`embed: fetch attempt ${attempt} → ${imageUrl.slice(0, 60)}...`);
           const res = await fetch(imageUrl);
+          log(`embed: fetch attempt ${attempt} responded status=${res.status}`);
           if (res.status === 429 && attempt < attempts) {
             // Transient rate limit — back off and try again rather than fail outright.
             await new Promise((resolve) => setTimeout(resolve, attempt * 1500));
@@ -55,8 +73,11 @@ export default function ShareCardModal({ workout, currentUser, onClose }: ShareC
           if (!res.ok) {
             throw new Error(`HTTP ${res.status} ${res.statusText}`);
           }
-          return await res.blob();
+          const blob = await res.blob();
+          log(`embed: blob received, size=${blob.size} type=${blob.type}`);
+          return blob;
         } catch (err) {
+          log(`embed: attempt ${attempt} threw: ${(err as any)?.message || err}`);
           if (attempt === attempts) throw err;
         }
       }
@@ -72,14 +93,17 @@ export default function ShareCardModal({ workout, currentUser, onClose }: ShareC
           reader.onerror = () => reject(reader.error || new Error('FileReader failed'));
           reader.readAsDataURL(blob);
         });
+        log(`embed: converted to data URL, length=${dataUrl.length}`);
         await new Promise<void>((resolve, reject) => {
           imgEl.onload = () => resolve();
           imgEl.onerror = () => reject(new Error('Image failed to decode after setting data URL'));
           imgEl.src = dataUrl;
         });
+        log(`embed: img decoded OK, naturalSize=${imgEl.naturalWidth}x${imgEl.naturalHeight}`);
         setPhotoEmbedError(null);
       } catch (err: any) {
         const message = err?.message || String(err);
+        log(`embed: FAILED — ${message}`);
         console.error('Could not fetch/embed workout photo as a data URL:', err);
         setPhotoEmbedError(message);
       } finally {
@@ -92,45 +116,59 @@ export default function ShareCardModal({ workout, currentUser, onClose }: ShareC
   };
 
   useEffect(() => {
+    log(`mount: imageUrl=${imageUrl ? imageUrl.slice(0, 60) + '...' : '(none)'}`);
     embedPhotoAsDataUrl();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imageUrl]);
 
   const generateCardFileAndUrl = async (): Promise<{ file: File; dataUrl: string } | null> => {
-    if (!cardRef.current) return null;
+    if (!cardRef.current) {
+      log('export: cardRef missing, aborting');
+      return null;
+    }
+    log('export: waiting for photo embed...');
     await embedPhotoAsDataUrl();
+    const imgEl = photoImgRef.current;
+    log(`export: photo state before capture — src is data URL? ${imgEl ? imgEl.src.startsWith('data:') : 'no img el'}, naturalSize=${imgEl?.naturalWidth}x${imgEl?.naturalHeight}`);
+    log('export: calling toPng...');
     const dataUrl = await toPng(cardRef.current, {
       quality: 0.95,
       pixelRatio: 2,
       cacheBust: true,
     });
+    log(`export: toPng done, output length=${dataUrl.length}`);
 
     const res = await fetch(dataUrl);
     const blob = await res.blob();
     const fileName = `GPO_Workout_${currentUser.name.replace(/\s+/g, '_')}_${Date.now()}.png`;
     const file = new File([blob], fileName, { type: 'image/png' });
+    log(`export: final file ready, size=${blob.size} bytes`);
     return { file, dataUrl };
   };
 
   const handleDownloadImage = async () => {
     setDownloading(true);
+    log('--- Save Photo clicked ---');
     try {
       const card = await generateCardFileAndUrl();
       if (!card) return;
 
       // Check if Web Share API with file support is available (Mobile iOS Safari / Chrome)
-      if (navigator.canShare && navigator.canShare({ files: [card.file] })) {
+      const canShareFiles = !!(navigator.canShare && navigator.canShare({ files: [card.file] }));
+      log(`save: canShare(files)=${canShareFiles}`);
+      if (canShareFiles) {
         try {
           await navigator.share({
             files: [card.file],
             title: 'GPO South Share Card',
             text: `การ์ดสรุปออกกำลังกาย - ${currentUser.name}`,
           });
+          log('save: navigator.share resolved OK');
           setDownloading(false);
           return;
         } catch (shareErr) {
           // User cancelled or share failed, fallback to standard download
-          console.log('Web share cancelled or failed, using download fallback:', shareErr);
+          log(`save: navigator.share rejected — ${(shareErr as any)?.message || shareErr}`);
         }
       }
 
@@ -139,7 +177,9 @@ export default function ShareCardModal({ workout, currentUser, onClose }: ShareC
       link.download = card.file.name;
       link.href = card.dataUrl;
       link.click();
+      log('save: fallback <a download> clicked');
     } catch (err) {
+      log(`save: FAILED — ${(err as any)?.message || err}`);
       console.error('Error exporting image:', err);
       alert('ไม่สามารถบันทึกภาพได้ชั่วคราว กรุณาลองจับภาพหน้าจอ (Screenshot) เพื่อบันทึกการ์ด');
     } finally {
@@ -149,21 +189,26 @@ export default function ShareCardModal({ workout, currentUser, onClose }: ShareC
 
   const handleShareToLine = async () => {
     setDownloading(true);
+    log('--- Share to LINE clicked ---');
     const shareText = `🏃‍♂️ ผลการออกกำลังกายของ ${currentUser.name} (${currentUser.department || 'GPO South'})\n🏆 กิจกรรม: ${activityName}\n👟 จำนวน: ${steps.toLocaleString()} ก้าว | 🔥 ${calories} kcal | ⏱️ ${duration} นาที\n✨ มาร่วมสร้างสุขภาพดีกับ GPO South Health Tracker ด้วยกันครับ!`;
 
     try {
       const card = await generateCardFileAndUrl();
-      if (card && navigator.canShare && navigator.canShare({ files: [card.file] })) {
+      const canShareFiles = !!(card && navigator.canShare && navigator.canShare({ files: [card.file] }));
+      log(`share: canShare(files)=${canShareFiles}`);
+      if (card && canShareFiles) {
         // Native Web Share with actual Image File (Allows sending direct photo to LINE / Save to Photos)
         await navigator.share({
           files: [card.file],
           title: 'GPO South Health Card',
           text: shareText,
         });
+        log('share: navigator.share resolved OK');
         setDownloading(false);
         return;
       }
     } catch (e) {
+      log(`share: navigator.share bypassed/rejected — ${(e as any)?.message || e}`);
       console.log('Native share bypassed or error:', e);
     } finally {
       setDownloading(false);
@@ -315,6 +360,17 @@ export default function ShareCardModal({ workout, currentUser, onClose }: ShareC
         {photoEmbedError && (
           <div className="mx-3 sm:mx-4 mt-2 bg-amber-50 border border-amber-200 text-amber-800 text-[10px] sm:text-[11px] p-2.5 rounded-xl shrink-0 break-words">
             ⚠️ ไม่สามารถโหลดรูปหลักฐานเข้าการ์ดได้ (รูปอื่นๆ ในการ์ดจะยังสร้างได้ตามปกติ): {photoEmbedError}
+          </div>
+        )}
+
+        {/* Temporary step-by-step debug log — always visible (not just on error)
+            so it can be read/screenshotted straight off the screen on mobile,
+            no DevTools needed. Safe to remove once the photo-export bug is found. */}
+        {debugLog.length > 0 && (
+          <div className="mx-3 sm:mx-4 mt-2 bg-slate-900 text-slate-100 text-[9px] p-2 rounded-xl shrink-0 max-h-28 overflow-y-auto font-mono leading-tight">
+            {debugLog.map((line, i) => (
+              <div key={i} className="break-words">{line}</div>
+            ))}
           </div>
         )}
 
