@@ -5,7 +5,7 @@ import GpoLogo from './GpoLogo';
 import ActivityIcon from './ActivityIcon';
 import Avatar from './Avatar';
 import { X, Download, Share2, Check, Sparkles, Footprints, Flame, Clock } from 'lucide-react';
-import { toPng } from 'html-to-image';
+import { toCanvas } from 'html-to-image';
 
 interface ShareCardModalProps {
   workout?: Workout | null;
@@ -16,6 +16,7 @@ interface ShareCardModalProps {
 export default function ShareCardModal({ workout, currentUser, onClose }: ShareCardModalProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   const photoImgRef = useRef<HTMLImageElement>(null);
+  const photoContainerRef = useRef<HTMLDivElement>(null);
   const [downloading, setDownloading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [photoEmbedError, setPhotoEmbedError] = useState<string | null>(null);
@@ -130,13 +131,95 @@ export default function ShareCardModal({ workout, currentUser, onClose }: ShareC
     await embedPhotoAsDataUrl();
     const imgEl = photoImgRef.current;
     log(`export: photo state before capture — src is data URL? ${imgEl ? imgEl.src.startsWith('data:') : 'no img el'}, naturalSize=${imgEl?.naturalWidth}x${imgEl?.naturalHeight}`);
-    log('export: calling toPng...');
-    const dataUrl = await toPng(cardRef.current, {
-      quality: 0.95,
+    log('export: calling toCanvas...');
+    const canvas = await toCanvas(cardRef.current, {
       pixelRatio: 2,
       cacheBust: true,
     });
-    log(`export: toPng done, output length=${dataUrl.length}`);
+    log(`export: toCanvas done, size=${canvas.width}x${canvas.height}`);
+
+    // WebKit (Safari/iOS — confirmed via on-device testing) can silently fail
+    // to paint an <img> that's inside html-to-image's SVG <foreignObject>
+    // capture, even though everything up to this point (fetch, data URL,
+    // decode) succeeded. Draw the photo in ourselves directly via Canvas 2D,
+    // which doesn't go through foreignObject at all and is reliable
+    // everywhere. Also redraw the small scrim + activity label that sit on
+    // top of the photo, since they're normally painted together with it.
+    if (imgEl && photoContainerRef.current && imgEl.naturalWidth > 0 && cardRef.current) {
+      const ctx = canvas.getContext('2d');
+      const cardRect = cardRef.current.getBoundingClientRect();
+      const containerRect = photoContainerRef.current.getBoundingClientRect();
+      if (ctx && cardRect.width > 0) {
+        const scale = canvas.width / cardRect.width;
+        const destX = (containerRect.left - cardRect.left) * scale;
+        const destY = (containerRect.top - cardRect.top) * scale;
+        const destW = containerRect.width * scale;
+        const destH = containerRect.height * scale;
+
+        // Replicate CSS `object-fit: cover` cropping.
+        const imgRatio = imgEl.naturalWidth / imgEl.naturalHeight;
+        const destRatio = destW / destH;
+        let sx = 0, sy = 0, sw = imgEl.naturalWidth, sh = imgEl.naturalHeight;
+        if (imgRatio > destRatio) {
+          sw = imgEl.naturalHeight * destRatio;
+          sx = (imgEl.naturalWidth - sw) / 2;
+        } else {
+          sh = imgEl.naturalWidth / destRatio;
+          sy = (imgEl.naturalHeight - sh) / 2;
+        }
+
+        const radius = 16 * scale; // matches rounded-2xl
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(destX + radius, destY);
+        ctx.arcTo(destX + destW, destY, destX + destW, destY + destH, radius);
+        ctx.arcTo(destX + destW, destY + destH, destX, destY + destH, radius);
+        ctx.arcTo(destX, destY + destH, destX, destY, radius);
+        ctx.arcTo(destX, destY, destX + destW, destY, radius);
+        ctx.closePath();
+        ctx.clip();
+
+        ctx.drawImage(imgEl, sx, sy, sw, sh, destX, destY, destW, destH);
+
+        // Bottom gradient scrim (matches bg-gradient-to-t from-black/60 to-transparent).
+        const grad = ctx.createLinearGradient(0, destY, 0, destY + destH);
+        grad.addColorStop(0, 'rgba(0,0,0,0)');
+        grad.addColorStop(1, 'rgba(0,0,0,0.6)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(destX, destY, destW, destH);
+        ctx.restore();
+
+        // Activity name pill (icon omitted for simplicity — text is the part that matters).
+        const fontSize = 11 * scale;
+        ctx.font = `bold ${fontSize}px sans-serif`;
+        const label = activityName;
+        const padX = 10 * scale;
+        const padY = 5 * scale;
+        const textWidth = ctx.measureText(label).width;
+        const pillW = textWidth + padX * 2;
+        const pillH = fontSize + padY * 2;
+        const pillX = destX + 12 * scale;
+        const pillY = destY + destH - pillH - 8 * scale;
+        const pr = pillH / 2;
+        ctx.fillStyle = 'rgba(0,0,0,0.4)';
+        ctx.beginPath();
+        ctx.moveTo(pillX + pr, pillY);
+        ctx.arcTo(pillX + pillW, pillY, pillX + pillW, pillY + pillH, pr);
+        ctx.arcTo(pillX + pillW, pillY + pillH, pillX, pillY + pillH, pr);
+        ctx.arcTo(pillX, pillY + pillH, pillX, pillY, pr);
+        ctx.arcTo(pillX, pillY, pillX + pillW, pillY, pr);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, pillX + padX, pillY + pillH / 2);
+
+        log('export: manually drew photo + scrim + label onto canvas');
+      }
+    }
+
+    const dataUrl = canvas.toDataURL('image/png', 0.95);
+    log(`export: final dataUrl length=${dataUrl.length}`);
 
     const res = await fetch(dataUrl);
     const blob = await res.blob();
@@ -286,7 +369,7 @@ export default function ShareCardModal({ workout, currentUser, onClose }: ShareC
 
             {/* Optional Photo Attachment */}
             {imageUrl ? (
-              <div className="my-2 rounded-2xl overflow-hidden border-2 border-white/20 shadow-md max-h-40 sm:max-h-48 relative group bg-black/20">
+              <div ref={photoContainerRef} className="my-2 rounded-2xl overflow-hidden border-2 border-white/20 shadow-md max-h-40 sm:max-h-48 relative group bg-black/20">
                 {/* No src set here on purpose — see the comment above
                     embedPhotoAsDataUrl. This starts blank and that function
                     fills it in once its single fetch of the photo completes,
