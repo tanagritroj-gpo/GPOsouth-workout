@@ -15,6 +15,7 @@ interface ShareCardModalProps {
 
 export default function ShareCardModal({ workout, currentUser, onClose }: ShareCardModalProps) {
   const cardRef = useRef<HTMLDivElement>(null);
+  const photoImgRef = useRef<HTMLImageElement>(null);
   const [downloading, setDownloading] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -26,34 +27,46 @@ export default function ShareCardModal({ workout, currentUser, onClose }: ShareC
   const dateStr = workout?.period || workout?.date || new Date().toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' });
   const imageUrl = workout?.imageUrl || (workout?.imageUrls && workout.imageUrls[0]);
 
-  // html-to-image renders the card by serializing it into an SVG <foreignObject>,
-  // then loading that SVG into an offscreen <img> and waiting for ITS onload —
-  // which fires as soon as the SVG document itself is parsed, not once every
-  // externally-hosted photo inside it (googleusercontent.com, no CORS caching
-  // guarantee) has actually finished downloading. The first export can capture
-  // before that photo has painted; warming the browser's HTTP cache for it
-  // ahead of time means it's already available and paints in time.
-  const preloadImage = (src?: string | false): Promise<void> => {
-    return new Promise((resolve) => {
-      if (!src) return resolve();
-      const img = new Image();
-      // No crossOrigin here — the <img> actually rendered in the card below
-      // doesn't set it either, and browsers cache CORS vs. non-CORS fetches
-      // of the same URL separately. Matching fetch mode is what makes this
-      // preload actually warm the cache entry html-to-image's cloned node reuses.
-      img.onload = () => resolve();
-      img.onerror = () => resolve(); // don't block export if the photo fails to load
-      img.src = src;
-    });
+  // html-to-image's own image embedding (node_modules/html-to-image/lib/dataurl.js
+  // resourceToDataURL) has a real bug: it keeps a module-level cache keyed by the
+  // URL, and if the fetch for an image ever fails once, it caches an EMPTY
+  // result for that URL and reuses it forever after (cacheBust only busts the
+  // fetch itself, not this cache key) — plus it depends on that fetch racing
+  // successfully against the export in the first place. Rather than depend on
+  // any of that, fetch the externally-hosted workout photo ourselves and patch
+  // it into the DOM as a data: URL before calling toPng — html-to-image skips
+  // its own embedding step entirely for src values that are already data: URLs,
+  // so this sidesteps the bug rather than working around its timing.
+  const embedPhotoAsDataUrl = async (): Promise<void> => {
+    const imgEl = photoImgRef.current;
+    if (!imgEl || !imageUrl || imgEl.src.startsWith('data:')) return;
+    try {
+      const res = await fetch(imageUrl);
+      const blob = await res.blob();
+      const dataUrl: string = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+      await new Promise<void>((resolve) => {
+        imgEl.onload = () => resolve();
+        imgEl.onerror = () => resolve();
+        imgEl.src = dataUrl;
+      });
+    } catch (err) {
+      console.warn('Could not pre-embed workout photo as a data URL, export may fall back to the original URL:', err);
+    }
   };
 
   useEffect(() => {
-    preloadImage(imageUrl);
+    embedPhotoAsDataUrl();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imageUrl]);
 
   const generateCardFileAndUrl = async (): Promise<{ file: File; dataUrl: string } | null> => {
     if (!cardRef.current) return null;
-    await preloadImage(imageUrl);
+    await embedPhotoAsDataUrl();
     const dataUrl = await toPng(cardRef.current, {
       quality: 0.95,
       pixelRatio: 2,
@@ -197,7 +210,7 @@ export default function ShareCardModal({ workout, currentUser, onClose }: ShareC
             {/* Optional Photo Attachment */}
             {imageUrl ? (
               <div className="my-2 rounded-2xl overflow-hidden border-2 border-white/20 shadow-md max-h-40 sm:max-h-48 relative group">
-                <img src={imageUrl} alt="Workout" className="w-full h-36 sm:h-44 object-cover" />
+                <img ref={photoImgRef} src={imageUrl} alt="Workout" className="w-full h-36 sm:h-44 object-cover" />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
                 <div className="absolute bottom-2 left-3 right-3 flex items-center justify-between text-white text-[10px] sm:text-[11px] font-bold">
                   <span className="flex items-center gap-1 bg-black/40 backdrop-blur-md px-2.5 py-1 rounded-full border border-white/20">
