@@ -1,5 +1,6 @@
 import express from "express";
 import path from "path";
+import crypto from "crypto";
 import cron from "node-cron";
 import { User, Workout, LeaderboardEntry } from "./src/types";
 import {
@@ -9,13 +10,22 @@ import {
   addWorkout,
   deleteWorkout,
   seedInitialDataIfEmpty,
-  getInitialMockData
+  getInitialMockData,
+  getAdminDb
 } from "./firebase-db";
 
 const app = express();
 const PORT = 3000;
 
-app.use(express.json({ limit: "10mb" }));
+// Capture the raw body alongside the parsed JSON — the LINE webhook signature
+// (x-line-signature) is an HMAC over the exact raw bytes, which body-parser
+// consumes before we'd otherwise be able to see them.
+app.use(express.json({
+  limit: "10mb",
+  verify: (req: any, _res, buf) => {
+    req.rawBody = buf;
+  },
+}));
 
 // Enable CORS for Vercel and cross-origin requests
 app.use((req, res, next) => {
@@ -711,6 +721,69 @@ app.post(["/api/line/notify", "/line/notify", "/api/line-send", "/line-send"], a
   } catch (error: any) {
     console.error("POST /api/line/notify error:", error);
     res.status(400).json({ error: error.message || "เกิดข้อผิดพลาดในการเชื่อมต่อกับ LINE Messaging API" });
+  }
+});
+
+// TEMPORARY: LINE webhook used only to discover a group's ID once the bot is
+// invited into it (the Messaging API has no "list my groups" endpoint — the
+// group ID only ever shows up in an event payload). Safe to remove/disable
+// once the target group's ID has been captured and configured.
+app.post(["/api/line/webhook", "/line/webhook"], async (req: any, res) => {
+  // Ack immediately — LINE expects a fast response and retries on timeout/non-200.
+  res.status(200).json({ received: true });
+
+  try {
+    const channelSecret = process.env.LINE_CHANNEL_SECRET;
+    const signature = req.headers["x-line-signature"] as string | undefined;
+
+    if (channelSecret) {
+      const expected = crypto.createHmac("sha256", channelSecret).update(req.rawBody || Buffer.from("")).digest("base64");
+      if (!signature || signature !== expected) {
+        console.warn("LINE webhook: signature mismatch, ignoring payload");
+        return;
+      }
+    } else {
+      console.warn("LINE webhook: LINE_CHANNEL_SECRET not set — accepting payload unverified (temporary debug mode)");
+    }
+
+    const events = (req.body && req.body.events) || [];
+    for (const event of events) {
+      console.log("LINE webhook event:", JSON.stringify(event));
+      try {
+        const db = getAdminDb();
+        await db.collection("_lineWebhookDebug").add({
+          type: event.type,
+          sourceType: event.source?.type || null,
+          groupId: event.source?.groupId || null,
+          roomId: event.source?.roomId || null,
+          userId: event.source?.userId || null,
+          messageText: event.message?.text || null,
+          receivedAt: new Date().toISOString(),
+        });
+      } catch (dbErr) {
+        console.error("LINE webhook: failed to store debug event:", dbErr);
+      }
+    }
+  } catch (error) {
+    console.error("LINE webhook error:", error);
+  }
+});
+
+// TEMPORARY: read back what the webhook above captured. Protected by the
+// channel secret as a shared key so it isn't a wide-open public endpoint.
+app.get(["/api/line/webhook-log", "/line/webhook-log"], async (req, res) => {
+  try {
+    const channelSecret = process.env.LINE_CHANNEL_SECRET;
+    if (!channelSecret || req.query.secret !== channelSecret) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const db = getAdminDb();
+    const snapshot = await db.collection("_lineWebhookDebug").orderBy("receivedAt", "desc").limit(20).get();
+    const events = snapshot.docs.map((doc) => doc.data());
+    res.json({ events });
+  } catch (error: any) {
+    console.error("GET /api/line/webhook-log error:", error);
+    res.status(500).json({ error: error.message || "เกิดข้อผิดพลาด" });
   }
 });
 

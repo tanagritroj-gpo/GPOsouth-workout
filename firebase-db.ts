@@ -5,7 +5,7 @@ import { User, Workout } from "./src/types";
 const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || "gen-lang-client-0309015147";
 const FIRESTORE_DB_ID = process.env.FIRESTORE_DATABASE_ID || "ai-studio-gposouthworkouts-72aed3a5-5bbb-46b6-862a-fd279d089e8d";
 
-function getAdminDb() {
+export function getAdminDb() {
   const serviceAccountRaw = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
   if (!serviceAccountRaw) {
     throw new Error(
