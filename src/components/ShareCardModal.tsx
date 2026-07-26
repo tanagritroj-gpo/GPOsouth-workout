@@ -15,9 +15,10 @@ interface ShareCardModalProps {
 
 export default function ShareCardModal({ workout, currentUser, onClose }: ShareCardModalProps) {
   const cardRef = useRef<HTMLDivElement>(null);
-  const photoImgRef = useRef<HTMLImageElement>(null);
+  const photoContainerRef = useRef<HTMLDivElement>(null);
   const [downloading, setDownloading] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [photoEmbedError, setPhotoEmbedError] = useState<string | null>(null);
 
   // If specific workout is provided, use its details. Otherwise, construct a summary card for user.
   const activityName = workout?.activityType || 'ออกกำลังกายประจำวัน';
@@ -27,36 +28,74 @@ export default function ShareCardModal({ workout, currentUser, onClose }: ShareC
   const dateStr = workout?.period || workout?.date || new Date().toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' });
   const imageUrl = workout?.imageUrl || (workout?.imageUrls && workout.imageUrls[0]);
 
-  // html-to-image's own image embedding (node_modules/html-to-image/lib/dataurl.js
-  // resourceToDataURL) has a real bug: it keeps a module-level cache keyed by the
-  // URL, and if the fetch for an image ever fails once, it caches an EMPTY
-  // result for that URL and reuses it forever after (cacheBust only busts the
-  // fetch itself, not this cache key) — plus it depends on that fetch racing
-  // successfully against the export in the first place. Rather than depend on
-  // any of that, fetch the externally-hosted workout photo ourselves and patch
-  // it into the DOM as a data: URL before calling toPng — html-to-image skips
-  // its own embedding step entirely for src values that are already data: URLs,
-  // so this sidesteps the bug rather than working around its timing.
-  const embedPhotoAsDataUrl = async (): Promise<void> => {
-    const imgEl = photoImgRef.current;
-    if (!imgEl || !imageUrl || imgEl.src.startsWith('data:')) return;
-    try {
-      const res = await fetch(imageUrl);
-      const blob = await res.blob();
-      const dataUrl: string = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result as string);
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      });
-      await new Promise<void>((resolve) => {
-        imgEl.onload = () => resolve();
-        imgEl.onerror = () => resolve();
-        imgEl.src = dataUrl;
-      });
-    } catch (err) {
-      console.warn('Could not pre-embed workout photo as a data URL, export may fall back to the original URL:', err);
-    }
+  // The photo is deliberately NOT set as a plain `background-image: url(imageUrl)`
+  // anywhere — that would make the browser issue its own normal image request
+  // for display, IN ADDITION to the fetch() below needed to embed it as a data
+  // URL for export. Two simultaneous requests for the same externally-hosted
+  // (Google-served) photo is exactly what was tripping Google's rate limiting
+  // (confirmed via a real HTTP 429 response while investigating this bug) —
+  // this component is the only thing that ever requests this photo, once.
+  //
+  // Separately, html-to-image's own image embedding (node_modules/html-to-image/
+  // lib/dataurl.js resourceToDataURL) keeps a module-level cache keyed by URL,
+  // and if its fetch for an image ever fails once, it caches an EMPTY result
+  // and reuses it forever after (cacheBust only busts the fetch itself, not
+  // this cache key) — another reason to embed the photo ourselves rather than
+  // let html-to-image fetch it.
+  const embedPromiseRef = useRef<Promise<void> | null>(null);
+  const embedPhotoAsDataUrl = (): Promise<void> => {
+    const containerEl = photoContainerRef.current;
+    if (!containerEl || !imageUrl || containerEl.style.backgroundImage.includes('data:')) return Promise.resolve();
+    if (embedPromiseRef.current) return embedPromiseRef.current;
+
+    const fetchWithRetry = async (): Promise<Blob> => {
+      const attempts = 3;
+      for (let attempt = 1; attempt <= attempts; attempt++) {
+        try {
+          const res = await fetch(imageUrl);
+          if (res.status === 429 && attempt < attempts) {
+            // Transient rate limit — back off and try again rather than fail outright.
+            await new Promise((resolve) => setTimeout(resolve, attempt * 1500));
+            continue;
+          }
+          if (!res.ok) {
+            throw new Error(`HTTP ${res.status} ${res.statusText}`);
+          }
+          return await res.blob();
+        } catch (err) {
+          if (attempt === attempts) throw err;
+        }
+      }
+      throw new Error('Unreachable');
+    };
+
+    const run = async () => {
+      try {
+        const blob = await fetchWithRetry();
+        const dataUrl: string = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.onerror = () => reject(reader.error || new Error('FileReader failed'));
+          reader.readAsDataURL(blob);
+        });
+        containerEl.style.backgroundImage = `url("${dataUrl}")`;
+        // Give the browser an actual paint cycle before anything reads the DOM
+        // back out (toPng's cloneNode runs synchronously right after this).
+        await new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        });
+        setPhotoEmbedError(null);
+      } catch (err: any) {
+        const message = err?.message || String(err);
+        console.error('Could not fetch/embed workout photo as a data URL:', err);
+        setPhotoEmbedError(message);
+      } finally {
+        embedPromiseRef.current = null;
+      }
+    };
+
+    embedPromiseRef.current = run();
+    return embedPromiseRef.current;
   };
 
   useEffect(() => {
@@ -210,7 +249,17 @@ export default function ShareCardModal({ workout, currentUser, onClose }: ShareC
             {/* Optional Photo Attachment */}
             {imageUrl ? (
               <div className="my-2 rounded-2xl overflow-hidden border-2 border-white/20 shadow-md max-h-40 sm:max-h-48 relative group">
-                <img ref={photoImgRef} src={imageUrl} alt="Workout" className="w-full h-36 sm:h-44 object-cover" />
+                {/* No background-image URL set here on purpose — see the long
+                    comment above embedPhotoAsDataUrl. This div starts blank and
+                    embedPhotoAsDataUrl fills it in once its single fetch of the
+                    photo completes, so the browser only ever requests it once. */}
+                <div
+                  ref={photoContainerRef}
+                  role="img"
+                  aria-label="Workout"
+                  className="w-full h-36 sm:h-44 bg-black/20"
+                  style={{ backgroundSize: 'cover', backgroundPosition: 'center' }}
+                />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
                 <div className="absolute bottom-2 left-3 right-3 flex items-center justify-between text-white text-[10px] sm:text-[11px] font-bold">
                   <span className="flex items-center gap-1 bg-black/40 backdrop-blur-md px-2.5 py-1 rounded-full border border-white/20">
@@ -268,6 +317,15 @@ export default function ShareCardModal({ workout, currentUser, onClose }: ShareC
             </div>
           </div>
         </div>
+
+        {/* Diagnostic banner: only appears if the workout photo failed to embed,
+            so the actual browser-reported reason is visible without DevTools
+            (this card is mostly used from mobile where DevTools isn't handy). */}
+        {photoEmbedError && (
+          <div className="mx-3 sm:mx-4 mt-2 bg-amber-50 border border-amber-200 text-amber-800 text-[10px] sm:text-[11px] p-2.5 rounded-xl shrink-0 break-words">
+            ⚠️ ไม่สามารถโหลดรูปหลักฐานเข้าการ์ดได้ (รูปอื่นๆ ในการ์ดจะยังสร้างได้ตามปกติ): {photoEmbedError}
+          </div>
+        )}
 
         {/* Action Controls */}
         <div className="p-3 sm:p-4 bg-sb-cream border-t border-sb-ceramic flex flex-col sm:flex-row items-center gap-2.5 shrink-0">
