@@ -143,6 +143,14 @@ export async function uploadImageToGoogleDrive(
     throw new Error("ไม่สามารถสร้างไฟล์ใน Google Drive ได้");
   }
 
+  // Verify the file actually landed in the target folder. Google Drive's
+  // files.create API has been observed (in production, on this exact
+  // TARGET_DRIVE_FOLDER_ID) to silently ignore the `parents` param on some
+  // uploads — no error, no warning — and place the file in the uploader's
+  // own My Drive root instead. Rather than trust the create response, check
+  // where the file really ended up and move it if needed.
+  const isTargetFolder = await verifyAndFixTargetFolder(fileId, accessToken);
+
   // Set permissions so anyone with the link can view the image
   try {
     await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions?supportsAllDrives=true&supportsTeamDrives=true`, {
@@ -162,7 +170,43 @@ export async function uploadImageToGoogleDrive(
 
   // Direct viewable CDN URL from Google Drive
   const imageUrl = `https://lh3.googleusercontent.com/d/${fileId}`;
-  return { imageUrl, isTargetFolder: true };
+  return { imageUrl, isTargetFolder };
+}
+
+async function verifyAndFixTargetFolder(fileId: string, accessToken: string): Promise<boolean> {
+  try {
+    const metaRes = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${fileId}?fields=parents&supportsAllDrives=true`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+    if (!metaRes.ok) {
+      console.warn("Could not verify uploaded file's parent folder:", await metaRes.text());
+      return true; // don't block the upload on a verification failure
+    }
+    const meta = await metaRes.json();
+    const actualParents: string[] = meta.parents || [];
+    if (actualParents.includes(TARGET_DRIVE_FOLDER_ID)) {
+      return true;
+    }
+
+    // Wrong (or no) folder — move it into the correct one.
+    console.warn(`File ${fileId} landed outside the target folder (parents: ${actualParents.join(", ") || "none"}), correcting...`);
+    const removeParents = actualParents.join(",");
+    const moveRes = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${fileId}?addParents=${TARGET_DRIVE_FOLDER_ID}` +
+        (removeParents ? `&removeParents=${removeParents}` : "") +
+        `&supportsAllDrives=true`,
+      { method: "PATCH", headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+    if (!moveRes.ok) {
+      console.error("Failed to move file into target folder after upload:", await moveRes.text());
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn("Error verifying/correcting target folder for uploaded file:", err);
+    return true; // don't block the upload on a verification failure
+  }
 }
 
 async function performDriveUpload(
