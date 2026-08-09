@@ -320,7 +320,14 @@ export default async function handler(req: any, res: any) {
     return res.status(400).json({
       success: false,
       error: errorMessage,
-      details: responseData
+      details: responseData,
+      debug: {
+        endpoint,
+        hasTarget: !!targetToUse,
+        targetLength: targetToUse.length,
+        tokenLength: tokenToUse.length,
+        lineStatus: lineResponse.status
+      }
     });
   } catch (error: any) {
     console.error("Direct Line Send Function Error:", error);
