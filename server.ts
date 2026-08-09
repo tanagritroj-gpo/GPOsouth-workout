@@ -61,11 +61,11 @@ let lineConfig = {
 function buildFlexMessage(
   top5: { userName: string; totalSteps: number; totalCalories: number }[],
   stats: { totalSteps: number; totalWorkouts: number },
-  appUrl: string = process.env.APP_URL || "https://gposouth-workout.vercel.app"
+  appUrl: string = process.env.APP_URL || "https://ais-dev-gauxwisqu5lug66cyjaqqs-433778356972.asia-southeast1.run.app"
 ) {
   let urlToUse = (appUrl || "").trim();
   if (!urlToUse) {
-    urlToUse = "https://gposouth-workout.vercel.app";
+    urlToUse = "https://ais-dev-gauxwisqu5lug66cyjaqqs-433778356972.asia-southeast1.run.app";
   } else if (!urlToUse.startsWith("http://") && !urlToUse.startsWith("https://")) {
     urlToUse = "https://" + urlToUse;
   }
