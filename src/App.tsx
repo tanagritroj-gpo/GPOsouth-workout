@@ -11,7 +11,7 @@ import GpoLogo from './components/GpoLogo';
 import Avatar from './components/Avatar';
 import ProfileModal from './components/ProfileModal';
 import { Heart, Trophy, BarChart3, PlusCircle, LogOut, Calendar, Footprints, Flame, Layers, Sparkles, Activity, X, Camera, FileText, Users, HeartHandshake } from 'lucide-react';
-import { dbGetWorkouts, dbGetSummary, dbDeleteWorkout, seedInitialDataIfEmpty, dbGetUsers } from './firebase-client';
+import { dbGetWorkouts, dbGetSummary, dbDeleteWorkout, dbGetUsers } from './firebase-client';
 import { handleDriveRedirectResult } from './google-drive';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -44,12 +44,7 @@ export default function App() {
     }
   }, []);
 
-  // Seed the database if it is empty (client-side backup for static hosting platforms like Vercel)
   useEffect(() => {
-    seedInitialDataIfEmpty().then(() => {
-      fetchData();
-    });
-
     handleDriveRedirectResult().then((token) => {
       if (token && window.location.hash.includes('access_token')) {
         setActiveTab('form');

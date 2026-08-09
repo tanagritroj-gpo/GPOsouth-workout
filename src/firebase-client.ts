@@ -36,87 +36,6 @@ function ensureAuthReady(): Promise<void> {
   return authReadyPromise;
 }
 
-// Helper to get initial mock data to seed GPO South Health Tracker if empty
-export function getInitialMockData(): { users: User[]; workouts: Workout[] } {
-  const users: User[] = [
-    { id: "u-1", name: "คุณธนกฤต รจ.", department: "GPO South", pin: "1234", createdAt: new Date().toISOString() },
-    { id: "u-2", name: "คุณสมชาย แข็งแรง", department: "GPO South", pin: "1111", createdAt: new Date().toISOString() },
-    { id: "u-3", name: "คุณวิภาวี วิ่งไว", department: "GPO South", pin: "2222", createdAt: new Date().toISOString() },
-    { id: "u-4", name: "คุณเกียรติศักดิ์ ฟิตเปรี๊ยะ", department: "GPO South", pin: "3333", createdAt: new Date().toISOString() },
-    { id: "u-5", name: "คุณสุพัตรา รักสุขภาพ", department: "GPO South", pin: "4444", createdAt: new Date().toISOString() },
-  ];
-
-  const workouts: Workout[] = [];
-  const activities = ["วิ่ง", "เดินเร็ว", "ว่ายน้ำ", "เต้นแอโรบิค", "เดิน Trail", "ออกกำลังกายหลายรูปแบบ"];
-  const activitySteps: { [key: string]: number } = {
-    "วิ่ง": 8000,
-    "เดินเร็ว": 6000,
-    "ว่ายน้ำ": 1000,
-    "เต้นแอโรบิค": 4000,
-    "เดิน Trail": 12000,
-    "ออกกำลังกายหลายรูปแบบ": 5000,
-  };
-  const activityCalories: { [key: string]: number } = {
-    "วิ่ง": 500,
-    "เดินเร็ว": 300,
-    "ว่ายน้ำ": 450,
-    "เต้นแอโรบิค": 350,
-    "เดิน Trail": 700,
-    "ออกกำลังกายหลายรูปแบบ": 400,
-  };
-
-  const today = new Date();
-  let workoutIdCounter = 1;
-
-  for (let i = 0; i < 28; i++) {
-    const recordDate = new Date(today);
-    recordDate.setDate(today.getDate() - i);
-    const dateStr = recordDate.toISOString().split("T")[0]; // YYYY-MM-DD
-
-    users.forEach((user) => {
-      const rand = (parseInt(user.id.replace("u-", "")) + i) % 7;
-      if (rand < 4) { // Active on this day
-        const actIndex = (parseInt(user.id.replace("u-", "")) * i) % activities.length;
-        const act = activities[actIndex];
-        
-        const variance = 0.8 + ((i % 5) * 0.1); // 0.8 to 1.2
-        const steps = Math.round(activitySteps[act] * variance);
-        const calories = Math.round(activityCalories[act] * variance);
-        const durationMinutes = Math.round(30 * variance);
-        
-        let submissionFormat: "daily" | "weekly" | "monthly" = "daily";
-        let period = dateStr;
-        if (i % 7 === 0 && i > 0) {
-          submissionFormat = "weekly";
-          const startWeek = new Date(recordDate);
-          startWeek.setDate(recordDate.getDate() - 6);
-          period = `${startWeek.getDate()} - ${recordDate.getDate()} มี.ค. 2569`;
-        } else if (i % 25 === 0 && i > 0) {
-          submissionFormat = "monthly";
-          period = "เดือนมิถุนายน 2569";
-        }
-
-        workouts.push({
-          id: `w-${workoutIdCounter++}`,
-          userId: user.id,
-          userName: user.name,
-          date: dateStr,
-          submissionFormat,
-          period,
-          activityType: act,
-          steps,
-          calories,
-          durationMinutes,
-          imageUrl: "",
-          createdAt: recordDate.toISOString(),
-        });
-      }
-    });
-  }
-
-  return { users, workouts };
-}
-
 // 1. Get all users
 export async function dbGetUsers(): Promise<User[]> {
   try {
@@ -291,31 +210,7 @@ export async function dbGetSummary(): Promise<{ stats: WorkoutStats; leaderboard
   }
 }
 
-// 7. Seed initial data if Firestore database is empty
-export async function seedInitialDataIfEmpty(): Promise<void> {
-  try {
-    await ensureAuthReady();
-    const usersCol = collection(db, "users");
-    const snapshot = await getDocs(usersCol);
-    if (snapshot.empty) {
-      console.log("Firestore database is empty. Seeding initial GPO South Health Tracker data from client-side...");
-      const initialData = getInitialMockData();
-      
-      for (const user of initialData.users) {
-        await dbAddUser(user);
-      }
-      
-      for (const workout of initialData.workouts) {
-        await dbAddWorkout(workout);
-      }
-      console.log("Seeding complete on client side!");
-    }
-  } catch (err) {
-    console.error("Error seeding initial data to Firestore from client-side:", err);
-  }
-}
-
-// 8. Comments & Reactions in Firestore
+// 7. Comments & Reactions in Firestore
 export interface FeedCommentDoc {
   id: string;
   workoutId: string;

@@ -9,8 +9,6 @@ import {
   getWorkouts,
   addWorkout,
   deleteWorkout,
-  seedInitialDataIfEmpty,
-  getInitialMockData,
   getAdminDb
 } from "./firebase-db";
 
@@ -797,9 +795,6 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 
 // Start Vite middleware or static serving
 async function startServer() {
-  // Seed database if empty
-  await seedInitialDataIfEmpty().catch(() => {});
-
   if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
     try {
       const { createServer: createViteServer } = await import("vite");

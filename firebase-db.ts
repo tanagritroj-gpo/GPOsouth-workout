@@ -17,18 +17,6 @@ export function getAdminDb() {
   return getFirestore(app, FIRESTORE_DB_ID);
 }
 
-// Helper to get initial mock data if needed for UI testing
-export function getInitialMockData(): { users: User[]; workouts: Workout[] } {
-  const users: User[] = [
-    { id: "u-1", name: "คุณธนกฤต รจ.", department: "GPO South", pin: "1234", createdAt: new Date().toISOString() },
-    { id: "u-2", name: "คุณสมชาย แข็งแรง", department: "GPO South", pin: "1111", createdAt: new Date().toISOString() },
-    { id: "u-3", name: "คุณวิภาวี วิ่งไว", department: "GPO South", pin: "2222", createdAt: new Date().toISOString() },
-    { id: "u-4", name: "คุณเกียรติศักดิ์ ฟิตเปรี๊ยะ", department: "GPO South", pin: "3333", createdAt: new Date().toISOString() },
-    { id: "u-5", name: "คุณสุพัตรา รักสุขภาพ", department: "GPO South", pin: "4444", createdAt: new Date().toISOString() },
-  ];
-  return { users, workouts: [] };
-}
-
 // 1. Get all users
 export async function getUsers(): Promise<User[]> {
   try {
@@ -93,7 +81,3 @@ export async function deleteWorkout(id: string): Promise<boolean> {
   }
 }
 
-// 6. Seed initial data (Disabled: Do not auto-seed mock data into Firestore)
-export async function seedInitialDataIfEmpty(): Promise<void> {
-  return;
-}
