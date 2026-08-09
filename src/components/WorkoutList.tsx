@@ -1,28 +1,68 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Workout, User } from '../types';
-import { Calendar, Trash2, ShieldAlert, Footprints, Flame, Filter, Search, X, Clock, ChevronDown, BarChart3 } from 'lucide-react';
+import { Calendar, Trash2, ShieldAlert, Footprints, Flame, Filter, Search, X, Clock, ChevronDown, BarChart3, Loader2 } from 'lucide-react';
 import ActivityIcon from './ActivityIcon';
 import Avatar from './Avatar';
+import { dbGetWorkoutsPage, WorkoutsPage } from '../firebase-client';
+
+const PAGE_SIZE = 20;
 
 interface WorkoutListProps {
-  workouts: Workout[];
   currentUser: User | null;
   allUsers?: User[];
   onDeleteWorkout: (id: string) => Promise<void>;
 }
 
-export default function WorkoutList({ workouts, currentUser, allUsers = [], onDeleteWorkout }: WorkoutListProps) {
+export default function WorkoutList({ currentUser, allUsers = [], onDeleteWorkout }: WorkoutListProps) {
+  // This view manages its own paginated fetch instead of taking the full
+  // workouts list as a prop — unlike Dashboard/Leaderboard/Report, it doesn't
+  // need every record to be correct, just the most recent ones, so there's no
+  // reason to pull (and keep re-fetching) the entire collection just for this
+  // browsing list. Search/filter below only apply to what's been loaded so
+  // far; loading more pages widens what they can match.
+  const [workouts, setWorkouts] = useState<Workout[]>([]);
+  const [cursor, setCursor] = useState<WorkoutsPage['cursor']>(null);
+  const [hasMore, setHasMore] = useState<boolean>(true);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [loadingMore, setLoadingMore] = useState<boolean>(false);
+
   const [filterFormat, setFilterFormat] = useState<string>('all');
   const [filterActivity, setFilterActivity] = useState<string>('all');
   const [searchName, setSearchName] = useState<string>('');
-  
+
   // Lightbox modal for previewing verification images
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [previewImages, setPreviewImages] = useState<string[]>([]);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deletePin, setDeletePin] = useState<string>('');
   const [deleteError, setDeleteError] = useState<string>('');
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    dbGetWorkoutsPage(PAGE_SIZE).then((page) => {
+      if (cancelled) return;
+      setWorkouts(page.workouts);
+      setCursor(page.cursor);
+      setHasMore(page.hasMore);
+      setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleLoadMore = async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const page = await dbGetWorkoutsPage(PAGE_SIZE, cursor);
+      setWorkouts((prev) => [...prev, ...page.workouts]);
+      setCursor(page.cursor);
+      setHasMore(page.hasMore);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   // Get unique activity types for filtering dropdown
   const uniqueActivities = Array.from(new Set(workouts.map((w) => w.activityType)));
@@ -81,6 +121,7 @@ export default function WorkoutList({ workouts, currentUser, allUsers = [], onDe
 
     try {
       await onDeleteWorkout(id);
+      setWorkouts((prev) => prev.filter((w) => w.id !== id));
       setDeletingId(null);
       setDeletePin('');
       setDeleteError('');
@@ -156,7 +197,12 @@ export default function WorkoutList({ workouts, currentUser, allUsers = [], onDe
 
       {/* Grid of Workouts cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {filteredWorkouts.length === 0 ? (
+        {loading ? (
+          <div className="col-span-full py-12 flex flex-col items-center justify-center gap-2 text-sm text-sb-text-muted">
+            <Loader2 className="w-5 h-5 animate-spin text-sb-accent" />
+            <span>กำลังโหลดรายการ...</span>
+          </div>
+        ) : filteredWorkouts.length === 0 ? (
           <div className="col-span-full py-12 text-center text-sm text-sb-text-muted">
             ไม่มีรายการส่งสถิติการออกกำลังกายที่ตรงกับตัวกรองของคุณ
           </div>
@@ -299,6 +345,27 @@ export default function WorkoutList({ workouts, currentUser, allUsers = [], onDe
           })
         )}
       </div>
+
+      {/* Load More — search/filter above only apply to what's loaded so far */}
+      {!loading && hasMore && (
+        <div className="flex justify-center pt-5">
+          <button
+            type="button"
+            onClick={handleLoadMore}
+            disabled={loadingMore}
+            className="px-5 py-2.5 text-xs font-bold text-sb-accent bg-sb-cream hover:bg-sb-light-green/30 border border-sb-ceramic rounded-full transition-all flex items-center gap-2 disabled:opacity-50"
+          >
+            {loadingMore ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>กำลังโหลด...</span>
+              </>
+            ) : (
+              <span>โหลดรายการเพิ่มเติม</span>
+            )}
+          </button>
+        </div>
+      )}
 
       {/* 1. FULL-SCREEN LIGHTBOX MODAL FOR PROOF IMAGES */}
       {previewImage && createPortal(

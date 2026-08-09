@@ -49,6 +49,13 @@ export default function ReportPage({ workouts, currentUser }: ReportPageProps) {
   // Export Notification
   const [exportSuccessMsg, setExportSuccessMsg] = useState<string>('');
 
+  // Sort key for the employee performance summary table
+  const [employeeSortKey, setEmployeeSortKey] = useState<'steps' | 'calories' | 'duration'>('steps');
+
+  // Pagination for the detailed activity history list (newest first)
+  const HISTORY_PAGE_SIZE = 5;
+  const [historyPage, setHistoryPage] = useState<number>(1);
+
   // Fetch registered users list
   useEffect(() => {
     let isMounted = true;
@@ -200,6 +207,47 @@ export default function ReportPage({ workouts, currentUser }: ReportPageProps) {
     });
   }, [workouts, selectedUserId, selectedDepartment, selectedTimeframe, dateRangeFilter, searchQuery, users]);
 
+  // filteredWorkouts is already newest-first (dbGetWorkouts sorts by createdAt
+  // desc), so pagination here just slices straight through it page by page.
+  const totalHistoryPages = Math.max(1, Math.ceil(filteredWorkouts.length / HISTORY_PAGE_SIZE));
+  const paginatedWorkouts = filteredWorkouts.slice(
+    (historyPage - 1) * HISTORY_PAGE_SIZE,
+    historyPage * HISTORY_PAGE_SIZE
+  );
+
+  // Jump back to page 1 whenever the underlying filtered result set changes,
+  // so the user isn't left stranded on a now-empty/out-of-range page.
+  useEffect(() => {
+    setHistoryPage(1);
+  }, [selectedUserId, selectedDepartment, selectedTimeframe, dateRangeFilter, searchQuery]);
+
+  const renderHistoryPagination = () => {
+    if (filteredWorkouts.length === 0) return null;
+    return (
+      <div className="flex items-center justify-center gap-2 py-3 flex-wrap">
+        <button
+          type="button"
+          onClick={() => setHistoryPage((p) => Math.max(1, p - 1))}
+          disabled={historyPage <= 1}
+          className="px-3 py-1.5 text-[10px] font-bold text-sb-house bg-white border border-sb-ceramic rounded-full disabled:opacity-40 disabled:cursor-not-allowed hover:bg-sb-cream transition-all"
+        >
+          ← ก่อนหน้า
+        </button>
+        <span className="text-[10px] font-bold text-sb-text-muted px-2 whitespace-nowrap">
+          หน้า {historyPage} / {totalHistoryPages} (ทั้งหมด {filteredWorkouts.length} รายการ)
+        </span>
+        <button
+          type="button"
+          onClick={() => setHistoryPage((p) => Math.min(totalHistoryPages, p + 1))}
+          disabled={historyPage >= totalHistoryPages}
+          className="px-3 py-1.5 text-[10px] font-bold text-sb-house bg-white border border-sb-ceramic rounded-full disabled:opacity-40 disabled:cursor-not-allowed hover:bg-sb-cream transition-all"
+        >
+          ถัดไป →
+        </button>
+      </div>
+    );
+  };
+
   // Filtered Employees List (for Employee Table / Cards)
   const filteredEmployees = useMemo(() => {
     return employeeDirectory.filter((item) => {
@@ -220,8 +268,12 @@ export default function ReportPage({ workouts, currentUser }: ReportPageProps) {
       }
 
       return true;
-    }).sort((a, b) => b.totalSteps - a.totalSteps);
-  }, [employeeDirectory, selectedUserId, selectedDepartment, searchQuery]);
+    }).sort((a, b) => {
+      if (employeeSortKey === 'calories') return b.totalCalories - a.totalCalories;
+      if (employeeSortKey === 'duration') return b.totalDuration - a.totalDuration;
+      return b.totalSteps - a.totalSteps;
+    });
+  }, [employeeDirectory, selectedUserId, selectedDepartment, searchQuery, employeeSortKey]);
 
   // Overall Aggregated Stats for current filtered dataset
   const filteredStats = useMemo(() => {
@@ -748,9 +800,27 @@ export default function ReportPage({ workouts, currentUser }: ReportPageProps) {
               </h3>
               <p className="text-[11px] sm:text-xs text-sb-text-muted mt-0.5">แตะพนักงานแต่ละคนเพื่อเจาะลึกดูรายงานสถิติเฉพาะบุคคล</p>
             </div>
-            <span className="text-[10px] font-bold text-sb-accent bg-sb-light-green/20 px-2.5 py-1 rounded-full border border-sb-light-green/40 whitespace-nowrap shrink-0 self-start sm:self-auto">
-              เรียงตามก้าวสะสม
-            </span>
+            <div className="flex items-center gap-1.5 bg-sb-cream p-1 rounded-full border border-sb-ceramic shrink-0 self-start sm:self-auto">
+              <span className="text-[9px] font-bold text-sb-text-muted uppercase pl-1.5 whitespace-nowrap">เรียงตาม:</span>
+              {([
+                { key: 'steps', label: 'ก้าว' },
+                { key: 'calories', label: 'kcal' },
+                { key: 'duration', label: 'เวลา' },
+              ] as const).map((opt) => (
+                <button
+                  key={opt.key}
+                  type="button"
+                  onClick={() => setEmployeeSortKey(opt.key)}
+                  className={`text-[10px] font-bold px-2.5 py-1 rounded-full whitespace-nowrap transition-all ${
+                    employeeSortKey === opt.key
+                      ? 'bg-sb-accent text-white shadow-sm'
+                      : 'text-sb-text-muted hover:text-sb-house hover:bg-black/5'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Desktop Table View */}
@@ -761,9 +831,9 @@ export default function ReportPage({ workouts, currentUser }: ReportPageProps) {
                   <th className="py-2.5 px-3 whitespace-nowrap">อันดับ</th>
                   <th className="py-2.5 px-3 whitespace-nowrap">ชื่อพนักงาน / แผนก</th>
                   <th className="py-2.5 px-3 text-center whitespace-nowrap">จำนวนบันทึก</th>
-                  <th className="py-2.5 px-3 text-right whitespace-nowrap">ก้าวสะสมรวม</th>
-                  <th className="py-2.5 px-3 text-right whitespace-nowrap">แคลลอรี่ (kcal)</th>
-                  <th className="py-2.5 px-3 text-right whitespace-nowrap">เวลารวม (นาที)</th>
+                  <th className={`py-2.5 px-3 text-right whitespace-nowrap ${employeeSortKey === 'steps' ? 'text-sb-accent' : ''}`}>ก้าวสะสมรวม{employeeSortKey === 'steps' ? ' ▼' : ''}</th>
+                  <th className={`py-2.5 px-3 text-right whitespace-nowrap ${employeeSortKey === 'calories' ? 'text-sb-accent' : ''}`}>แคลลอรี่ (kcal){employeeSortKey === 'calories' ? ' ▼' : ''}</th>
+                  <th className={`py-2.5 px-3 text-right whitespace-nowrap ${employeeSortKey === 'duration' ? 'text-sb-accent' : ''}`}>เวลารวม (นาที){employeeSortKey === 'duration' ? ' ▼' : ''}</th>
                   <th className="py-2.5 px-3 text-center whitespace-nowrap">กิจกรรมหลัก</th>
                   <th className="py-2.5 px-3 text-center whitespace-nowrap">การจัดการ</th>
                 </tr>
@@ -984,7 +1054,7 @@ export default function ReportPage({ workouts, currentUser }: ReportPageProps) {
                   </td>
                 </tr>
               ) : (
-                filteredWorkouts.slice(0, 30).map((w) => (
+                paginatedWorkouts.map((w) => (
                   <tr key={w.id} className="hover:bg-sb-cream/40 transition-colors">
                     <td className="py-2.5 px-3 font-mono font-bold text-sb-house whitespace-nowrap">
                       {w.date}
@@ -1024,11 +1094,9 @@ export default function ReportPage({ workouts, currentUser }: ReportPageProps) {
               )}
             </tbody>
           </table>
-          {filteredWorkouts.length > 30 && (
-            <p className="text-center text-[10px] text-sb-text-muted font-bold py-3 bg-sb-cream/30 border-t border-sb-ceramic">
-              แสดง 30 รายการแรกจากทั้งหมด {filteredWorkouts.length} รายการ (ส่งออกไฟล์ CSV เพื่อดูข้อมูลทั้งหมด)
-            </p>
-          )}
+          <div className="border-t border-sb-ceramic">
+            {renderHistoryPagination()}
+          </div>
         </div>
 
         {/* Mobile Card List View */}
@@ -1038,7 +1106,7 @@ export default function ReportPage({ workouts, currentUser }: ReportPageProps) {
               ไม่พบข้อมูลกิจกรรมในเงื่อนไขการค้นหา
             </div>
           ) : (
-            filteredWorkouts.slice(0, 30).map((w) => (
+            paginatedWorkouts.map((w) => (
               <div key={w.id} className="bg-white rounded-2xl border border-sb-ceramic/80 p-3.5 space-y-2.5 shadow-2xs">
                 {/* Header: User & Format */}
                 <div className="flex items-start justify-between gap-2">
@@ -1099,11 +1167,9 @@ export default function ReportPage({ workouts, currentUser }: ReportPageProps) {
             ))
           )}
 
-          {filteredWorkouts.length > 30 && (
-            <p className="text-center text-[10px] text-sb-text-muted font-bold py-2.5 bg-sb-cream/50 rounded-xl border border-sb-ceramic">
-              แสดง 30 รายการแรกจากทั้งหมด {filteredWorkouts.length} รายการ (ดาวน์โหลดไฟล์ CSV เพื่อดูทั้งหมด)
-            </p>
-          )}
+          <div className="bg-sb-cream/50 rounded-xl border border-sb-ceramic">
+            {renderHistoryPagination()}
+          </div>
         </div>
       </div>
 

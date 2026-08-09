@@ -337,7 +337,6 @@ export default function App() {
 
           {activeTab === 'history' && (
             <WorkoutList
-              workouts={workouts}
               currentUser={currentUser}
               allUsers={allUsers}
               onDeleteWorkout={handleDeleteWorkout}

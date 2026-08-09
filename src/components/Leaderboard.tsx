@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { User, LeaderboardEntry } from '../types';
-import { Trophy, Search, Flame, Footprints, Award, Calendar, Star, Clock, Medal, Zap, Sparkles, TrendingUp, MessageSquare } from 'lucide-react';
+import { Trophy, Search, Flame, Footprints, Award, Star, Clock, Medal, Zap, Sparkles, TrendingUp, MessageSquare } from 'lucide-react';
 import Avatar from './Avatar';
 import LineIntegrationModal from './LineIntegrationModal';
 
@@ -9,7 +9,7 @@ interface LeaderboardProps {
   currentUser?: User | null;
 }
 
-type SortMetric = 'steps' | 'calories' | 'duration' | 'workouts';
+type SortMetric = 'steps' | 'calories' | 'duration';
 
 const ALLOWED_LINE_ADMIN_IDS = ['u-1784682982533', 'u-1784639599172'];
 
@@ -25,8 +25,7 @@ export default function Leaderboard({ entries, currentUser }: LeaderboardProps) 
   const sortedEntries = [...entries].sort((a, b) => {
     if (metric === 'steps') return b.totalSteps - a.totalSteps;
     if (metric === 'calories') return b.totalCalories - a.totalCalories;
-    if (metric === 'duration') return (b.totalDurationMinutes || 0) - (a.totalDurationMinutes || 0);
-    return b.totalWorkouts - a.totalWorkouts;
+    return (b.totalDurationMinutes || 0) - (a.totalDurationMinutes || 0);
   });
 
   // Filter based on search query
@@ -38,8 +37,7 @@ export default function Leaderboard({ entries, currentUser }: LeaderboardProps) 
   const topLeaderValue = sortedEntries.length > 0 ? (
     metric === 'steps' ? sortedEntries[0].totalSteps :
     metric === 'calories' ? sortedEntries[0].totalCalories :
-    metric === 'duration' ? (sortedEntries[0].totalDurationMinutes || 0) :
-    sortedEntries[0].totalWorkouts
+    (sortedEntries[0].totalDurationMinutes || 0)
   ) : 1;
 
   // Find Current User's position in leaderboard
@@ -57,14 +55,12 @@ export default function Leaderboard({ entries, currentUser }: LeaderboardProps) 
     const myVal =
       metric === 'steps' ? currentUserEntry.totalSteps :
       metric === 'calories' ? currentUserEntry.totalCalories :
-      metric === 'duration' ? (currentUserEntry.totalDurationMinutes || 0) :
-      currentUserEntry.totalWorkouts;
+      (currentUserEntry.totalDurationMinutes || 0);
 
     const nextVal =
       metric === 'steps' ? prevRankUser.totalSteps :
       metric === 'calories' ? prevRankUser.totalCalories :
-      metric === 'duration' ? (prevRankUser.totalDurationMinutes || 0) :
-      prevRankUser.totalWorkouts;
+      (prevRankUser.totalDurationMinutes || 0);
 
     gapToNextRank = Math.max(1, nextVal - myVal + 1);
   }
@@ -72,8 +68,7 @@ export default function Leaderboard({ entries, currentUser }: LeaderboardProps) 
   const getMetricUnitLabel = () => {
     if (metric === 'steps') return 'ก้าว';
     if (metric === 'calories') return 'kcal';
-    if (metric === 'duration') return 'นาที';
-    return 'ครั้ง';
+    return 'นาที';
   };
 
   const getRankBadge = (rank: number) => {
@@ -112,10 +107,7 @@ export default function Leaderboard({ entries, currentUser }: LeaderboardProps) 
     if (metric === 'calories') {
       return `${entry.totalCalories.toLocaleString()} kcal`;
     }
-    if (metric === 'duration') {
-      return `${(entry.totalDurationMinutes || 0).toLocaleString()} นาที`;
-    }
-    return `${entry.totalWorkouts} ครั้ง`;
+    return `${(entry.totalDurationMinutes || 0).toLocaleString()} นาที`;
   };
 
   // Divide into Podium vs List
@@ -236,7 +228,7 @@ export default function Leaderboard({ entries, currentUser }: LeaderboardProps) 
       )}
 
       {/* 3. Metric Selector Buttons */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 bg-sb-cream p-1 rounded-2xl sm:rounded-full gap-1.5 mb-6 border border-sb-ceramic">
+      <div className="grid grid-cols-3 bg-sb-cream p-1 rounded-2xl sm:rounded-full gap-1.5 mb-6 border border-sb-ceramic">
         <button
           type="button"
           onClick={() => setMetric('steps')}
@@ -266,16 +258,6 @@ export default function Leaderboard({ entries, currentUser }: LeaderboardProps) 
         >
           <Clock className="w-3.5 h-3.5" />
           ระยะเวลาสะสม
-        </button>
-        <button
-          type="button"
-          onClick={() => setMetric('workouts')}
-          className={`py-2 rounded-full text-xs font-semibold transition-all flex items-center justify-center gap-1.5 ${
-            metric === 'workouts' ? 'bg-sb-accent text-white shadow-sm' : 'text-sb-text-muted hover:text-sb-house hover:bg-black/5'
-          }`}
-        >
-          <Calendar className="w-3.5 h-3.5" />
-          จำนวนครั้งสะสม
         </button>
       </div>
 
@@ -415,9 +397,7 @@ export default function Leaderboard({ entries, currentUser }: LeaderboardProps) 
                 ? entry.totalSteps
                 : metric === 'calories'
                 ? entry.totalCalories
-                : metric === 'duration'
-                ? (entry.totalDurationMinutes || 0)
-                : entry.totalWorkouts;
+                : (entry.totalDurationMinutes || 0);
 
             // Percentage of progress relative to #1 Leader
             const percentage = topLeaderValue > 0 ? (currentValue / topLeaderValue) * 100 : 0;

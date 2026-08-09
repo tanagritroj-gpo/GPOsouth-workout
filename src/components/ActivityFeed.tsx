@@ -5,7 +5,7 @@ import Avatar from './Avatar';
 import ActivityIcon from './ActivityIcon';
 import ShareCardModal from './ShareCardModal';
 import { dbSubscribeComments, dbAddComment, dbSubscribeReactions, dbSaveReaction, FeedCommentDoc, FeedReactionDoc } from '../firebase-client';
-import { Heart, Flame, Sparkles, Share2, Footprints, Clock, Calendar, Search, Filter, Send, ZoomIn, X } from 'lucide-react';
+import { Heart, Flame, Sparkles, Share2, Footprints, Clock, Calendar, Search, Filter, Send, ZoomIn, X, Hand } from 'lucide-react';
 
 interface ActivityFeedProps {
   workouts: Workout[];
@@ -101,12 +101,13 @@ export default function ActivityFeed({ workouts, users, currentUser }: ActivityF
     const unsubscribeReactions = dbSubscribeReactions((rawReactions) => {
       const reactionMap: { [workoutId: string]: { hearts: number; highFives: number; fires: number; myReactions: string[] } } = {};
 
-      // Seed initial base counts for workouts
+      // Seed real counts at zero for every workout — actual counts get
+      // filled in below from Firestore, never fabricated.
       workouts.forEach((w) => {
         reactionMap[w.id] = {
-          hearts: Math.floor((w.id.length * 3) % 7) + 1,
-          highFives: Math.floor((w.id.length * 5) % 9) + 2,
-          fires: Math.floor((w.id.length * 2) % 6) + 1,
+          hearts: 0,
+          highFives: 0,
+          fires: 0,
           myReactions: [],
         };
       });
@@ -324,11 +325,12 @@ export default function ActivityFeed({ workouts, users, currentUser }: ActivityF
             const quoteIndex = (workout.id.length + index) % MOTIVATIONAL_QUOTES.length;
             const caption = MOTIVATIONAL_QUOTES[quoteIndex];
 
-            // Reaction state for this item
+            // Reaction state for this item — real counts only, starts at 0
+            // until Firestore reactions load in.
             const itemReaction = reactions[workout.id] || {
-              hearts: Math.floor((workout.id.length * 3) % 7) + 2,
-              highFives: Math.floor((workout.id.length * 5) % 9) + 3,
-              fires: Math.floor((workout.id.length * 2) % 6) + 1,
+              hearts: 0,
+              highFives: 0,
+              fires: 0,
               myReactions: [],
             };
 
@@ -344,9 +346,9 @@ export default function ActivityFeed({ workouts, users, currentUser }: ActivityF
               >
                 {/* Floating Micro-interaction Animation */}
                 {floatingEffect?.workoutId === workout.id && (
-                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none z-30 animate-ping text-3xl">
+                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none z-30 animate-ping text-3xl flex items-center justify-center">
                     {floatingEffect.type === 'hearts' && '❤️'}
-                    {floatingEffect.type === 'highFives' && '👏'}
+                    {floatingEffect.type === 'highFives' && <Hand className="w-8 h-8 text-amber-500 fill-amber-400" />}
                     {floatingEffect.type === 'fires' && '🔥'}
                   </div>
                 )}
@@ -470,7 +472,7 @@ export default function ActivityFeed({ workouts, users, currentUser }: ActivityF
                       <span>{itemReaction.hearts}</span>
                     </button>
 
-                    {/* 👏 High Five Button */}
+                    {/* High Five Button */}
                     <button
                       type="button"
                       onClick={() => handleToggleReaction(workout.id, 'highFives')}
@@ -480,7 +482,7 @@ export default function ActivityFeed({ workouts, users, currentUser }: ActivityF
                           : 'bg-white text-sb-text-muted border-sb-ceramic hover:bg-amber-50/50'
                       }`}
                     >
-                      <span className="text-sm shrink-0">👏</span>
+                      <Hand className={`w-3.5 h-3.5 shrink-0 ${hasHighFive ? 'fill-amber-400 text-amber-600' : ''}`} />
                       <span>{itemReaction.highFives}</span>
                     </button>
 

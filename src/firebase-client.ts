@@ -1,5 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc, onSnapshot } from "firebase/firestore";
+import { getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc, onSnapshot, query, orderBy, limit, startAfter, QueryDocumentSnapshot, DocumentData } from "firebase/firestore";
 import { getAuth, signInAnonymously } from "firebase/auth";
 import config from "../firebase-applet-config.json";
 import { User, Workout, WorkoutStats, LeaderboardEntry } from "./types";
@@ -95,6 +95,40 @@ export async function dbGetWorkouts(): Promise<Workout[]> {
   } catch (err) {
     console.error("Error getting workouts from Firestore:", err);
     return [];
+  }
+}
+
+export interface WorkoutsPage {
+  workouts: Workout[];
+  hasMore: boolean;
+  cursor: QueryDocumentSnapshot<DocumentData> | null;
+}
+
+// 3b. Get one page of workouts, most recent first. For views that browse
+// recent activity (Feed, History) rather than needing every record — unlike
+// dbGetWorkouts/dbGetSummary, which power Dashboard/Leaderboard/Report and
+// must sum every record to produce correct totals, so they stay unpaginated.
+export async function dbGetWorkoutsPage(
+  pageSize: number,
+  cursor?: QueryDocumentSnapshot<DocumentData> | null
+): Promise<WorkoutsPage> {
+  try {
+    await ensureAuthReady();
+    const workoutsCol = collection(db, "workouts");
+    // Fetch one extra doc to know whether there's a next page without a separate count query.
+    const q = cursor
+      ? query(workoutsCol, orderBy("createdAt", "desc"), startAfter(cursor), limit(pageSize + 1))
+      : query(workoutsCol, orderBy("createdAt", "desc"), limit(pageSize + 1));
+    const snapshot = await getDocs(q);
+    const docsSlice = snapshot.docs.slice(0, pageSize);
+    return {
+      workouts: docsSlice.map((d) => d.data() as Workout),
+      hasMore: snapshot.docs.length > pageSize,
+      cursor: docsSlice[docsSlice.length - 1] || null,
+    };
+  } catch (err) {
+    console.error("Error getting paginated workouts from Firestore:", err);
+    return { workouts: [], hasMore: false, cursor: null };
   }
 }
 
