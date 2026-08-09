@@ -54,7 +54,7 @@ export default async function handler(req: any, res: any) {
       clean: remainingDemoUsers.length === 0 && remainingDemoWorkouts.length === 0,
     });
   } catch (error: any) {
-    console.error("GET /api/admin/verify-demo-cleanup error:", error);
+    console.error("GET /api/tools/verify-demo-cleanup error:", error);
     res.status(500).json({ error: error.message || "เกิดข้อผิดพลาด" });
   }
 }
