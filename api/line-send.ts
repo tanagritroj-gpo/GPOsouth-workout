@@ -29,7 +29,7 @@ function buildDefaultFlexMessage(top5: Array<{ userName: string; totalSteps: num
     year: "numeric",
   });
 
-  const urlToUse = appUrl || "https://ais-pre-gauxwisqu5lug66cyjaqqs-433778356972.asia-southeast1.run.app";
+  const urlToUse = appUrl || process.env.APP_URL || "https://gposouth-workout.vercel.app";
 
   const top5Contents = top5.length === 0
     ? [
